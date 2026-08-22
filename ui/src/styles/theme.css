@@ -1,0 +1,186 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Accelerate design tokens
+
+   Dark is the default: this is a tool that sits open beside an editor for hours.
+   Light is a full peer, not an afterthought — both are defined here in one place
+   so no component ever hard-codes a colour.
+--------------------------------------------------------------------------- */
+
+@theme {
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter",
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo,
+    Consolas, monospace;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, from furthest back to closest. */
+  --bg: #0a0c11;
+  --surface: #10131a;
+  --surface-2: #161a23;
+  --surface-3: #1c212c;
+  --border: #242a36;
+  --border-strong: #333b4a;
+
+  /* Text */
+  --text: #e7eaf0;
+  --text-muted: #8b94a7;
+  --text-faint: #5d6577;
+
+  /* Accent: the sense of motion the product is named for. */
+  --accent: #7c6bff;
+  --accent-soft: #7c6bff26;
+  --accent-text: #a99bff;
+  --accent-2: #3dd8d3;
+
+  /* Status */
+  --success: #34d399;
+  --success-soft: #34d39922;
+  --warn: #fbbf24;
+  --warn-soft: #fbbf2422;
+  --danger: #f87171;
+  --danger-soft: #f8717122;
+  --info: #60a5fa;
+  --info-soft: #60a5fa22;
+
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --radius: 10px;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f9fafb;
+  --surface-3: #f1f3f7;
+  --border: #e4e7ee;
+  --border-strong: #cdd3df;
+
+  --text: #131722;
+  --text-muted: #5c6478;
+  --text-faint: #8a92a4;
+
+  --accent: #5f4bd8;
+  --accent-soft: #5f4bd814;
+  --accent-text: #5f4bd8;
+  --accent-2: #14a8a3;
+
+  --success: #0f9d63;
+  --success-soft: #0f9d6314;
+  --warn: #b57506;
+  --warn-soft: #b5750614;
+  --danger: #d8443c;
+  --danger-soft: #d8443c14;
+  --info: #2b6fd6;
+  --info-soft: #2b6fd614;
+
+  --shadow-panel: 0 1px 2px rgb(16 24 40 / 0.05), 0 8px 24px -12px rgb(16 24 40 / 0.18);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+/* A quiet scrollbar — visible when you need it, invisible when you don't. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: content-box;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Respect users who don't want motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* --- Small shared utilities ------------------------------------------------ */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.hairline {
+  border-bottom: 1px solid var(--border);
+}
+
+/* The soft glow behind an actively running agent. */
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.running-dot {
+  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.enter {
+  animation: slide-up 180ms ease-out;
+}
+
+/* Drag region for the frameless window on macOS. */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-drag button,
+.titlebar-drag a,
+.titlebar-drag input {
+  -webkit-app-region: no-drag;
+}
