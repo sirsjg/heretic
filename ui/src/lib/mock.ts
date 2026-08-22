@@ -3,7 +3,7 @@
  *
  * Used when the UI runs in a plain browser (`pnpm dev`) rather than inside the
  * desktop shell, so the interface can be built and reviewed without agents, a
- * Flux server, or a repository. The shapes match `accel-core` exactly.
+ * Flux server, or a repository. The shapes match `heretic-core` exactly.
  */
 
 import type {
@@ -182,7 +182,7 @@ const TASKS: Task[] = [
     id: "t7ply95",
     title: "Testing harness: Vitest unit, integration with test DB, Playwright e2e",
     priority: 1,
-    blocked_reason: "Accelerate: review still requested changes after 3 attempts",
+    blocked_reason: "Heretic: review still requested changes after 3 attempts",
   }),
   task({
     id: "5cizcoz",
@@ -388,10 +388,10 @@ export class MockEngine {
       agent: "Qwen3 Coder (local) · Implementer",
       started_at: new Date().toISOString(),
       revisions: 0,
-      branch: `accelerate/${taskId}`,
+      branch: `heretic/${taskId}`,
       base_branch: "main",
       landing: "nothing",
-      worktree_path: `~/.local/share/accelerate/worktrees/${projectId}/${taskId}`,
+      worktree_path: `~/.local/share/heretic/worktrees/${projectId}/${taskId}`,
       changes: { files_changed: 0, insertions: 0, deletions: 0, files: [] },
       feed: [],
     };

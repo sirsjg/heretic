@@ -45,7 +45,7 @@ export function Sidebar() {
         >
           <IconSparks className="size-3.5 text-white" />
         </div>
-        <span className="text-[14px] font-semibold tracking-tight">Accelerate</span>
+        <span className="text-[14px] font-semibold tracking-tight">Heretic</span>
       </div>
 
       <ConnectionPill connection={connection} url={settings?.flux.base_url} />

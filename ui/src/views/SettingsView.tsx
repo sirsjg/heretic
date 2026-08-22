@@ -52,7 +52,7 @@ export function SettingsView() {
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           <Panel
             title="Flux server"
-            description="Accelerate reads projects, epics and tasks from here, and writes progress back."
+            description="Heretic reads projects, epics and tasks from here, and writes progress back."
             actions={
               <span className="flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)]">
                 <Dot tone={connection.connected ? "success" : "danger"} />
@@ -182,7 +182,7 @@ export function SettingsView() {
 
                 <Field
                   label="When a run is approved"
-                  hint="Merging requires a clean main checkout; Accelerate refuses rather than risk your work."
+                  hint="Merging requires a clean main checkout; Heretic refuses rather than risk your work."
                 >
                   <Select
                     value={binding.integration}

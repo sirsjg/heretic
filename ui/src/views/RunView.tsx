@@ -63,7 +63,7 @@ export function RunView() {
       <div className="grid h-full place-items-center">
         <EmptyState
           title="Nothing has run yet"
-          description="Start a task from a board, or turn on Auto for an epic and let Accelerate pick up work as it becomes ready."
+          description="Start a task from a board, or turn on Auto for an epic and let Heretic pick up work as it becomes ready."
         />
       </div>
     );

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/accel-core", "crates/accel-app"]
+members = ["crates/heretic-core", "crates/heretic-app"]
 
 [workspace.package]
 version = "0.1.0"

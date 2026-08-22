@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   Accelerate design tokens
+   Heretic design tokens
 
    Dark is the default: this is a tool that sits open beside an editor for hours.
    Light is a full peer, not an afterthought — both are defined here in one place
@@ -31,7 +31,7 @@
   --text-muted: #8b94a7;
   --text-faint: #5d6577;
 
-  /* Accent: the sense of motion the product is named for. */
+  /* Accent: the violet the mark is built on. */
   --accent: #7c6bff;
   --accent-soft: #7c6bff26;
   --accent-text: #a99bff;

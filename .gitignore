@@ -9,7 +9,7 @@ dist
 
 # Tauri
 src-tauri/target
-/crates/accel-app/target
+/crates/heretic-app/target
 
 # Local config & scratch
 .DS_Store

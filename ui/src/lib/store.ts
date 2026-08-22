@@ -87,7 +87,7 @@ export const useStore = create<State>((set, get) => ({
   toasts: [],
   theme:
     (typeof localStorage !== "undefined" &&
-      (localStorage.getItem("accelerate.theme") as "dark" | "light" | null)) ||
+      (localStorage.getItem("heretic.theme") as "dark" | "light" | null)) ||
     "dark",
 
   async initialise() {
@@ -291,7 +291,7 @@ export const useStore = create<State>((set, get) => ({
   toggleTheme() {
     const theme = get().theme === "dark" ? "light" : "dark";
     applyTheme(theme);
-    localStorage.setItem("accelerate.theme", theme);
+    localStorage.setItem("heretic.theme", theme);
     set({ theme });
   },
 
