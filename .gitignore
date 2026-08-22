@@ -1,0 +1,17 @@
+# Rust
+/target
+**/target
+
+# Node
+node_modules
+dist
+.vite
+
+# Tauri
+src-tauri/target
+/crates/accel-app/target
+
+# Local config & scratch
+.DS_Store
+*.local
+.env
