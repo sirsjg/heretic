@@ -96,7 +96,7 @@ export function AccessPanel({
   return (
     <Panel
       title="Access"
-      description="How Accelerate gets past the proxy in front of your Flux server."
+      description="How Heretic gets past the proxy in front of your Flux server."
       actions={<StatusChip connection={connection} />}
     >
       <div className="grid gap-3 px-4 py-4 sm:grid-cols-2">

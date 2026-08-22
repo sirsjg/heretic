@@ -129,7 +129,7 @@ export function ModelsView() {
 
           <Panel
             title="Model profiles"
-            description="Each profile is a command Accelerate runs, plus the model it should use."
+            description="Each profile is a command Heretic runs, plus the model it should use."
             actions={
               <Button size="sm" onClick={addProfile}>
                 Add profile

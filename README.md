@@ -1,4 +1,4 @@
-# Accelerate
+# Heretic
 
 A desktop companion for [Flux](https://github.com/sirsjg/flux). Point it at a
 project, switch **Auto** on for an epic, and it works the ready tasks with a team
@@ -33,10 +33,10 @@ a strong hosted model while the implementation grind runs on a local one.
 ## How a run works
 
 ```
-   Flux board                  Accelerate                     Your repo
+   Flux board                   Heretic                      Your repo
 ┌───────────────┐         ┌──────────────────┐          ┌──────────────────┐
 │ epic: auto ✓  │────────▶│ 1. is it ready?  │          │                  │
-│ task: todo    │         │ 2. worktree      │─────────▶│ accelerate/<task>│
+│ task: todo    │         │ 2. worktree      │─────────▶│ heretic/<task>   │
 │  · criteria   │         │ 3. plan          │          │   ┌────────────┐ │
 │  · guardrails │         │ 4. implement     │          │   │ agent works│ │
 └───────────────┘         │ 5. review ──┐    │          │   └────────────┘ │
@@ -107,7 +107,7 @@ sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev build-essential curl file
 To regenerate the platform icon set (`.icns`, `.ico`) from the source artwork:
 
 ```bash
-pnpm tauri icon crates/accel-app/icons/icon-1024.png
+pnpm tauri icon crates/heretic-app/icons/icon-1024.png
 ```
 
 <br>
@@ -136,7 +136,7 @@ added by hand — detection is a convenience, not a gate.
 
 ### Using another machine's models
 
-Point Accelerate at any box on your network — a DGX Spark, a workstation with a
+Point Heretic at any box on your network — a DGX Spark, a workstation with a
 GPU, a server in the rack. **Add a host**, give it a name and an address, and its
 models appear alongside the local ones.
 
@@ -160,7 +160,7 @@ concurrently, so one machine that is asleep does not hold up the rest.
 
 ### Running a local model
 
-Local models need a coding harness to actually edit files; Accelerate drives
+Local models need a coding harness to actually edit files; Heretic drives
 them through Codex's open-model mode:
 
 ```bash
@@ -178,7 +178,7 @@ Two messages are normal when driving a model Codex does not ship a catalogue
 entry for, and neither stops the run:
 
 - `Model metadata for <model> not found. Defaulting to fallback metadata.`
-  Accelerate passes the real context window when the host reports one, which is
+  Heretic passes the real context window when the host reports one, which is
   what the fallback would otherwise guess at.
 - `codex_models_manager: failed to refresh available models: missing field
   models`. Codex reads the OpenAI-shaped `/v1/models` listing with its Ollama
@@ -194,14 +194,14 @@ codex exec --json --sandbox workspace-write --oss --local-provider ollama -m <mo
 ```
 
 A model on another machine cannot use `--oss`, because Codex will not let
-configuration override its built-in provider ids. Accelerate declares one of its
+configuration override its built-in provider ids. Heretic declares one of its
 own instead:
 
 ```bash
 codex exec --json --sandbox workspace-write \
-  -c model_providers.accelerate-oss.base_url="http://spark.local:11434/v1" \
-  -c model_providers.accelerate-oss.wire_api="responses" \
-  -c model_provider="accelerate-oss" \
+  -c model_providers.heretic-oss.base_url="http://spark.local:11434/v1" \
+  -c model_providers.heretic-oss.wire_api="responses" \
+  -c model_provider="heretic-oss" \
   -m <model> "<brief>"
 ```
 
@@ -248,13 +248,13 @@ again. Service tokens do not expire.
 ### Signing in
 
 **Access → Sign in** opens a real browser window at your Flux URL. Complete your
-provider's flow as normal; Accelerate watches for the resulting session cookie,
+provider's flow as normal; Heretic watches for the resulting session cookie,
 verifies it can reach the Flux API with it, then closes the window and keeps it.
 
 ### The `Authorization` clash
 
 Flux reads its own API key from `Authorization: Bearer …`. If your proxy wants
-that same header, only one credential fits. Accelerate gives the header to the
+that same header, only one credential fits. Heretic gives the header to the
 proxy and warns you, because the alternative — silently dropping your proxy
 credential — would just look like an outage.
 
@@ -265,7 +265,7 @@ The fix is to let the proxy be the security boundary:
 FLUX_ALLOW_ANONYMOUS=1 flux serve
 ```
 
-Then leave the API key empty in Accelerate. Only do this when Flux is genuinely
+Then leave the API key empty in Heretic. Only do this when Flux is genuinely
 unreachable except through the proxy — bound to loopback or an internal network,
 never published directly.
 
@@ -295,18 +295,18 @@ requests.
 
 A proxy that rejects you answers with its own sign-in page, not a Flux error —
 and because HTTP clients follow redirects, that arrives as a perfectly ordinary
-`200` full of HTML. Accelerate detects this and says so, naming the provider
+`200` full of HTML. Heretic detects this and says so, naming the provider
 where it can, rather than reporting an unintelligible parse failure. The status
 in Settings distinguishes *blocked by the proxy* from *Flux rejected the key*,
 because the fixes are different.
 
-Accelerate also catches a subtler case. A Flux server that requires a key still
+Heretic also catches a subtler case. A Flux server that requires a key still
 answers a keyless `GET /api/projects` with `200` and the *public* projects — an
 empty list when your board is private. That looks exactly like a healthy
-connection with no work on it, so Accelerate checks `/api/auth/status` as well
+connection with no work on it, so Heretic checks `/api/auth/status` as well
 and tells you a key is needed rather than showing you an empty board.
 
-Use HTTPS. Accelerate warns if you send proxy credentials over plain `http://`
+Use HTTPS. Heretic warns if you send proxy credentials over plain `http://`
 to anything other than localhost.
 
 <br>
@@ -314,7 +314,7 @@ to anything other than localhost.
 ## Layout
 
 ```
-crates/accel-core/     the engine — no UI framework anywhere in it
+crates/heretic-core/   the engine — no UI framework anywhere in it
   flux/                REST client and the SSE watcher
   selection.rs         what may run unattended, and why something may not
   runner/              per-backend argv, process supervision, output parsing
@@ -322,7 +322,7 @@ crates/accel-core/     the engine — no UI framework anywhere in it
   prompt.rs            the brief each role works from
   orchestrator/        the run state machine and the engine
   detect.rs            finding agent CLIs and the models each host holds
-crates/accel-app/      the Tauri shell: commands and events, and little else
+crates/heretic-app/    the Tauri shell: commands and events, and little else
 ui/                    React + Tailwind front end
 ```
 
@@ -353,7 +353,7 @@ pnpm dev              # http://localhost:5183
 
 ## Design notes
 
-**Accelerate owns the board, not the agents.** Status changes and comments are
+**Heretic owns the board, not the agents.** Status changes and comments are
 written by the engine, so agents need no Flux access and no credentials. A local
 model with no MCP support behaves exactly like Claude Code.
 

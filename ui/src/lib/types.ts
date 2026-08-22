@@ -1,5 +1,5 @@
 /**
- * Mirrors the serialised types from `accel-core`.
+ * Mirrors the serialised types from `heretic-core`.
  *
  * Anything the Rust side sends over a Tauri command or event has a shape here.
  */
@@ -80,7 +80,7 @@ export interface Task {
   updated_at?: string | null;
 }
 
-/** A task plus why Accelerate can or cannot start it. */
+/** A task plus why Heretic can or cannot start it. */
 export interface TaskView {
   task: Task;
   /** null when the task is ready to run. */
@@ -157,7 +157,7 @@ export interface Settings {
 
 // --- Discovery --------------------------------------------------------------
 
-/** An agent CLI Accelerate knows how to drive. */
+/** An agent CLI Heretic knows how to drive. */
 export interface CliStatus {
   program: string;
   label: string;
