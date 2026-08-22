@@ -111,6 +111,8 @@ export interface ModelProfile {
   extra_args: string[];
   env: Record<string, string>;
   timeout_secs?: number | null;
+  /** Context window in tokens, when the host reports one. */
+  context_window?: number | null;
   autonomous: boolean;
 }
 
@@ -176,6 +178,8 @@ export interface DiscoveredModel {
   parameter_size?: string | null;
   quantization?: string | null;
   size_bytes?: number | null;
+  /** Context window in tokens, when the server reports one. */
+  context_length?: number | null;
 }
 
 export interface HostProbe {
@@ -201,6 +205,9 @@ export function describeModel(model: DiscoveredModel): string {
   const parts: string[] = [];
   if (model.parameter_size) parts.push(model.parameter_size);
   if (model.quantization) parts.push(model.quantization);
+  if (typeof model.context_length === "number") {
+    parts.push(`${Math.round(model.context_length / 1024)}k ctx`);
+  }
   if (typeof model.size_bytes === "number") {
     parts.push(
       model.size_bytes >= 1e9

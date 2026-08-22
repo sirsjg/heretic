@@ -108,6 +108,11 @@ pub struct ModelProfile {
     /// Hard ceiling on a single run, in seconds. `None` means no timeout.
     #[serde(default)]
     pub timeout_secs: Option<u64>,
+    /// The model's context window, in tokens, when the host reports one.
+    ///
+    /// Passed to backends that would otherwise guess.
+    #[serde(default)]
+    pub context_window: Option<u64>,
     /// Whether this profile may take actions without per-action approval.
     /// Local sandboxed models are typically trusted; anything touching a real
     /// repo unattended has to be, or it will hang on a permission prompt.
@@ -283,6 +288,7 @@ impl Settings {
             extra_args: Vec::new(),
             env: BTreeMap::new(),
             timeout_secs: Some(3600),
+            context_window: None,
             autonomous: true,
         };
         let qwen = ModelProfile {
@@ -293,6 +299,7 @@ impl Settings {
             extra_args: Vec::new(),
             env: BTreeMap::new(),
             timeout_secs: Some(5400),
+            context_window: None,
             autonomous: true,
         };
 

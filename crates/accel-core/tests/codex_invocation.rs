@@ -23,6 +23,7 @@ fn profile(runner: RunnerKind) -> ModelProfile {
         extra_args: Vec::new(),
         env: BTreeMap::new(),
         timeout_secs: Some(120),
+        context_window: None,
         autonomous: true,
     }
 }

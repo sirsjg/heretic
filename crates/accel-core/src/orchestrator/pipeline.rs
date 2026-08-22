@@ -891,6 +891,7 @@ mod tests {
             extra_args: Vec::new(),
             env: Default::default(),
             timeout_secs: None,
+            context_window: None,
             autonomous: true,
         }
     }

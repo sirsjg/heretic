@@ -146,6 +146,13 @@ pub struct DiscoveredModel {
     pub quantization: Option<String>,
     /// On-disk size in bytes.
     pub size_bytes: Option<u64>,
+    /// Context window the server reports, in tokens.
+    ///
+    /// Worth carrying: Codex has no catalogue entry for models outside its own
+    /// list and falls back to a conservative guess, which on a 262k-context
+    /// model throws most of it away.
+    #[serde(default)]
+    pub context_length: Option<u64>,
 }
 
 impl DiscoveredModel {
@@ -369,6 +376,8 @@ pub fn parse_ollama_tags(body: &str) -> std::result::Result<Vec<DiscoveredModel>
     struct Details {
         parameter_size: Option<String>,
         quantization_level: Option<String>,
+        #[serde(default)]
+        context_length: Option<u64>,
     }
     #[derive(Deserialize)]
     struct Entry {
@@ -409,6 +418,7 @@ pub fn parse_ollama_tags(body: &str) -> std::result::Result<Vec<DiscoveredModel>
                     .as_ref()
                     .and_then(|d| d.quantization_level.clone()),
                 size_bytes: entry.size,
+                context_length: entry.details.as_ref().and_then(|d| d.context_length),
             })
         })
         .collect();
@@ -440,6 +450,7 @@ pub fn parse_openai_models(body: &str) -> std::result::Result<Vec<DiscoveredMode
             parameter_size: None,
             quantization: None,
             size_bytes: None,
+            context_length: None,
         })
         .collect();
 
@@ -491,6 +502,18 @@ mod tests {
         assert_eq!(models[1].parameter_size.as_deref(), Some("30.5B"));
         assert_eq!(models[1].quantization.as_deref(), Some("Q4_K_M"));
         assert_eq!(models[1].describe(), "30.5B · Q4_K_M · 18.5 GB");
+        // No context_length in this payload, so nothing is invented.
+        assert!(models[1].context_length.is_none());
+    }
+
+    #[test]
+    fn a_reported_context_window_is_captured() {
+        // Real Ollama reports this under details; Codex otherwise guesses.
+        let body = r#"{"models":[{"name":"qwen3.8:latest","size":17741872154,
+          "details":{"parameter_size":"27.3B","quantization_level":"Q4_K_M",
+                     "context_length":262144,"embedding_length":5120}}]}"#;
+        let models = parse_ollama_tags(body).unwrap();
+        assert_eq!(models[0].context_length, Some(262_144));
     }
 
     #[test]

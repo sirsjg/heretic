@@ -111,6 +111,14 @@ pub fn build_command(profile: &ModelProfile, prompt: &str) -> AgentCommand {
                 args.push("-m".into());
                 args.push(model.into());
             }
+
+            // Codex only knows its own catalogue, so a local model gets fallback
+            // metadata unless the real window is supplied.
+            if let Some(window) = profile.context_window.filter(|w| *w > 0) {
+                args.push("-c".into());
+                args.push(format!("model_context_window={window}"));
+            }
+
             args.extend(profile.extra_args.iter().cloned());
             args.push(prompt.to_string());
 
@@ -190,6 +198,7 @@ mod tests {
             extra_args: Vec::new(),
             env: BTreeMap::new(),
             timeout_secs: None,
+            context_window: None,
             autonomous: true,
         }
     }
@@ -298,6 +307,25 @@ mod tests {
         let model = command.args.iter().position(|a| a == "-m").unwrap();
         assert_eq!(command.args[model + 1], "qwen3-coder:480b");
         assert_eq!(command.args.last().unwrap(), "build it");
+    }
+
+    #[test]
+    fn a_known_context_window_is_declared_rather_than_guessed() {
+        let mut p = profile(RunnerKind::CodexOss {
+            base_url: Some("http://spark.local:11434".into()),
+        });
+        p.model = Some("qwen3.8:latest".into());
+        p.context_window = Some(262_144);
+
+        let joined = build_command(&p, "hi").args.join(" ");
+        assert!(joined.contains("model_context_window=262144"), "{joined}");
+    }
+
+    #[test]
+    fn an_unknown_context_window_is_left_to_the_backend() {
+        let p = profile(RunnerKind::Codex);
+        let joined = build_command(&p, "hi").args.join(" ");
+        assert!(!joined.contains("model_context_window"));
     }
 
     #[test]

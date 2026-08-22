@@ -80,6 +80,9 @@ export function DetectPanel({
         extra_args: [],
         env: {},
         timeout_secs: 5400,
+        // Carry the real window through: without it Codex falls back to a
+        // conservative guess and wastes most of a large context.
+        context_window: model.context_length ?? null,
         autonomous: true,
       });
       onNotify("info", `Added ${model.id}.`);
@@ -101,6 +104,7 @@ export function DetectPanel({
       extra_args: [],
       env: {},
       timeout_secs: 3600,
+      context_window: null,
       autonomous: true,
     });
     onNotify("info", `Added ${cli.label}.`);

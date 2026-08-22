@@ -66,6 +66,7 @@ export function ModelsView() {
           extra_args: [],
           env: {},
           timeout_secs: 3600,
+          context_window: null,
           autonomous: true,
         },
       ],

@@ -155,6 +155,19 @@ The endpoint defaults to `http://localhost:11434/v1`.
 **Codex needs Ollama 0.13.4 or newer.** Anything older is refused outright, so
 the scan checks each host's version and says so before you hit it mid-run.
 
+Two messages are normal when driving a model Codex does not ship a catalogue
+entry for, and neither stops the run:
+
+- `Model metadata for <model> not found. Defaulting to fallback metadata.`
+  Accelerate passes the real context window when the host reports one, which is
+  what the fallback would otherwise guess at.
+- `codex_models_manager: failed to refresh available models: missing field
+  models`. Codex reads the OpenAI-shaped `/v1/models` listing with its Ollama
+  decoder. It is a catalogue refresh, not inference, and is internal to Codex.
+
+Repeated lines are folded together in the run feed, and a backend's own logging
+is shown dimmed, so neither drowns the agent's actual output.
+
 Under the hand, a local model runs as:
 
 ```bash

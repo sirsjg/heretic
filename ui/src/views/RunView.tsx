@@ -1,6 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useStore } from "../lib/store";
-import type { AgentEvent, RunRecord, RunStage, RunStatus } from "../lib/types";
+import type {
+  AgentEvent,
+  RunFeedItem,
+  RunRecord,
+  RunStage,
+  RunStatus,
+} from "../lib/types";
 import { STAGE_LABELS } from "../lib/types";
 import { Badge, Button, Dot, EmptyState, Spinner, cx } from "../components/ui";
 import {
@@ -299,8 +305,13 @@ function Feed({ run }: { run: RunRecord }) {
       className="min-h-0 flex-1 overflow-y-auto px-5 py-3"
     >
       <div className="flex flex-col gap-1.5">
-        {run.feed.map((item, index) => (
-          <FeedRow key={index} stage={item.stage} event={item.event} />
+        {collapse(run.feed).map((entry, index) => (
+          <FeedRow
+            key={index}
+            stage={entry.item.stage}
+            event={entry.item.event}
+            repeats={entry.repeats}
+          />
         ))}
         {run.status !== "running" && run.status !== "queued" && (
           <Outcome run={run} />
@@ -366,7 +377,45 @@ function Outcome({ run }: { run: RunRecord }) {
   );
 }
 
-function FeedRow({ stage, event }: { stage: RunStage; event: AgentEvent }) {
+/** Consecutive identical lines, folded into one with a count. */
+function collapse(
+  feed: RunFeedItem[],
+): { item: RunFeedItem; repeats: number }[] {
+  const out: { item: RunFeedItem; repeats: number }[] = [];
+
+  for (const item of feed) {
+    const previous = out.at(-1);
+    const same =
+      previous &&
+      previous.item.stage === item.stage &&
+      JSON.stringify(previous.item.event) === JSON.stringify(item.event);
+
+    if (same) previous.repeats += 1;
+    else out.push({ item, repeats: 1 });
+  }
+
+  return out;
+}
+
+/**
+ * A backend's own internal logging, as opposed to something the agent said.
+ *
+ * Codex writes tracing lines to stderr in `<timestamp> LEVEL target: message`
+ * form. They are worth keeping, but they are not agent output and should not
+ * shout.
+ */
+const INTERNAL_LOG =
+  /^\d{4}-\d{2}-\d{2}T[\d:.]+Z?\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+\S+:/;
+
+function FeedRow({
+  stage,
+  event,
+  repeats = 1,
+}: {
+  stage: RunStage;
+  event: AgentEvent;
+  repeats?: number;
+}) {
   const stageLabel = STAGE_LABELS[stage];
 
   if (event.type === "tool") {
@@ -384,6 +433,7 @@ function FeedRow({ stage, event }: { stage: RunStage; event: AgentEvent }) {
             {event.detail}
           </span>
         )}
+        <Repeats count={repeats} />
       </div>
     );
   }
@@ -395,6 +445,7 @@ function FeedRow({ stage, event }: { stage: RunStage; event: AgentEvent }) {
         <p className="text-[12.5px] leading-relaxed" style={{ color: "var(--danger)" }}>
           {event.message}
         </p>
+        <Repeats count={repeats} />
       </div>
     );
   }
@@ -433,7 +484,9 @@ function FeedRow({ stage, event }: { stage: RunStage; event: AgentEvent }) {
     );
   }
 
-  const text = event.type === "text" ? event.text : event.text;
+  const text = event.text;
+  const internal = event.type === "raw" && INTERNAL_LOG.test(text);
+
   return (
     <div className="enter flex items-start gap-2.5">
       <StageTag label={stageLabel} />
@@ -441,11 +494,27 @@ function FeedRow({ stage, event }: { stage: RunStage; event: AgentEvent }) {
         className={cx(
           "min-w-0 whitespace-pre-wrap text-[12.5px] leading-relaxed",
           event.type === "raw" && "font-mono text-[11.5px] text-[var(--text-muted)]",
+          internal && "text-[11px] text-[var(--text-faint)]",
         )}
       >
         {text}
       </p>
+      <Repeats count={repeats} />
     </div>
+  );
+}
+
+/** "x3" beside a line that arrived several times over. */
+function Repeats({ count }: { count: number }) {
+  if (count < 2) return null;
+  return (
+    <span
+      className="mt-0.5 shrink-0 rounded px-1 text-[10.5px] font-medium"
+      style={{ background: "var(--surface-3)", color: "var(--text-muted)" }}
+      title={`This line appeared ${count} times in a row`}
+    >
+      ×{count}
+    </span>
   );
 }
 
