@@ -105,7 +105,9 @@ mod tests {
         let store = SettingsStore::new(temp_path("missing"));
         let settings = store.load().unwrap();
         assert!(!settings.profiles.is_empty());
-        assert!(settings.resolve_profile("anything", Role::Implementer).is_some());
+        assert!(settings
+            .resolve_profile("anything", Role::Implementer)
+            .is_some());
     }
 
     #[test]
@@ -151,7 +153,9 @@ mod tests {
     #[test]
     fn validation_catches_roles_pointing_at_missing_profiles() {
         let mut settings = Settings::with_starter_profiles();
-        settings.roles.insert(Role::Reviewer, "does-not-exist".into());
+        settings
+            .roles
+            .insert(Role::Reviewer, "does-not-exist".into());
         let problems = settings.validate();
         assert!(problems.iter().any(|p| p.contains("Reviewer")));
     }

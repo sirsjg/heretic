@@ -14,7 +14,10 @@ pub enum AgentEvent {
     /// Prose the agent produced.
     Text { text: String },
     /// The agent used a tool.
-    Tool { name: String, detail: Option<String> },
+    Tool {
+        name: String,
+        detail: Option<String>,
+    },
     /// A line we could not interpret — printed as-is.
     Raw { text: String },
     /// Something the agent or its CLI reported as an error.
@@ -211,7 +214,10 @@ mod tests {
 
     #[test]
     fn bookkeeping_messages_are_dropped() {
-        assert_eq!(parse_line(r#"{"type":"system","subtype":"init"}"#, true), None);
+        assert_eq!(
+            parse_line(r#"{"type":"system","subtype":"init"}"#, true),
+            None
+        );
         assert_eq!(parse_line("   ", true), None);
     }
 

@@ -270,7 +270,10 @@ pub async fn commit_all(worktree: &Path, message: &str) -> Result<bool> {
     ensure_repository(worktree).await?;
     git(worktree, &["add", "-A"]).await?;
 
-    if git(worktree, &["diff", "--cached", "--quiet"]).await.is_ok() {
+    if git(worktree, &["diff", "--cached", "--quiet"])
+        .await
+        .is_ok()
+    {
         return Ok(false); // exit 0 from --quiet means no staged changes
     }
 
@@ -344,7 +347,10 @@ mod tests {
 
     #[test]
     fn slugs_are_branch_safe() {
-        assert_eq!(slugify("Add OAuth 2.0 support!", 40), "add-oauth-2-0-support");
+        assert_eq!(
+            slugify("Add OAuth 2.0 support!", 40),
+            "add-oauth-2-0-support"
+        );
         assert_eq!(slugify("   ", 40), "");
         assert_eq!(slugify("a".repeat(100).as_str(), 10).len(), 10);
     }

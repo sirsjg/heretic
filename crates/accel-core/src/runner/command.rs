@@ -94,7 +94,10 @@ pub fn build_command(profile: &ModelProfile, prompt: &str) -> AgentCommand {
                 if arg.contains("{{prompt}}") {
                     prompt_used = true;
                 }
-                resolved.push(arg.replace("{{prompt}}", prompt).replace("{{model}}", &model));
+                resolved.push(
+                    arg.replace("{{prompt}}", prompt)
+                        .replace("{{model}}", &model),
+                );
             }
             resolved.extend(profile.extra_args.iter().cloned());
 
@@ -171,7 +174,10 @@ mod tests {
         let mut p = profile(RunnerKind::ClaudeCode);
         p.autonomous = false;
         let command = build_command(&p, "hi");
-        assert!(!command.args.iter().any(|a| a == "--dangerously-skip-permissions"));
+        assert!(!command
+            .args
+            .iter()
+            .any(|a| a == "--dangerously-skip-permissions"));
     }
 
     #[test]
@@ -194,9 +200,9 @@ mod tests {
         assert_eq!(command.program, "codex");
         assert_eq!(command.args[0], "exec");
         assert!(command.args.contains(&"--oss".to_string()));
-        assert!(command
-            .args
-            .contains(&"model_providers.oss.base_url=\"http://192.168.1.10:11434/v1\"".to_string()));
+        assert!(command.args.contains(
+            &"model_providers.oss.base_url=\"http://192.168.1.10:11434/v1\"".to_string()
+        ));
         let position = command.args.iter().position(|a| a == "-m").unwrap();
         assert_eq!(command.args[position + 1], "qwen3-coder:30b");
         assert_eq!(command.args.last().unwrap(), "build it");
@@ -206,7 +212,12 @@ mod tests {
     fn custom_runners_substitute_the_prompt_placeholder() {
         let mut p = profile(RunnerKind::Custom {
             command: "aider".into(),
-            args: vec!["--model".into(), "{{model}}".into(), "--message".into(), "{{prompt}}".into()],
+            args: vec![
+                "--model".into(),
+                "{{model}}".into(),
+                "--message".into(),
+                "{{prompt}}".into(),
+            ],
         });
         p.model = Some("ollama/qwen".into());
 
@@ -232,7 +243,10 @@ mod tests {
 
     #[test]
     fn display_redacts_the_prompt() {
-        let command = build_command(&profile(RunnerKind::ClaudeCode), "a very long prompt that should not be shown in full");
+        let command = build_command(
+            &profile(RunnerKind::ClaudeCode),
+            "a very long prompt that should not be shown in full",
+        );
         assert!(command.display().contains("'<prompt>'"));
     }
 }

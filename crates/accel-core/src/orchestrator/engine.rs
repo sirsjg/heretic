@@ -428,16 +428,7 @@ impl Engine {
 
         let board = FluxBoard { client };
         let executor = CliExecutor;
-        let outcome = execute_run(
-            context,
-            config,
-            &board,
-            &workspace,
-            &executor,
-            cancel,
-            tx,
-        )
-        .await;
+        let outcome = execute_run(context, config, &board, &workspace, &executor, cancel, tx).await;
         let _ = relay.await;
 
         // Tidy up the worktree once the work has been merged; otherwise leave it
@@ -634,7 +625,11 @@ impl Engine {
             };
             let running = self.running_task_ids().await;
 
-            for candidate in board.candidates(&running).into_iter().take(capacity as usize) {
+            for candidate in board
+                .candidates(&running)
+                .into_iter()
+                .take(capacity as usize)
+            {
                 match self
                     .start_task(&binding.project_id, &candidate.task.id)
                     .await

@@ -130,11 +130,8 @@ pub async fn execute_run(
             return cancelled(board, &task_id, revisions, workspace).await;
         }
 
-        let prompt = prompt::implementer_prompt(
-            &context,
-            brief.as_deref(),
-            revision_notes.as_deref(),
-        );
+        let prompt =
+            prompt::implementer_prompt(&context, brief.as_deref(), revision_notes.as_deref());
 
         match run_stage(
             RunStage::Implementing,
@@ -151,7 +148,9 @@ pub async fn execute_run(
             StageResult::Ok(summary) => {
                 implementer_summary = summary.unwrap_or_default();
             }
-            StageResult::Cancelled => return cancelled(board, &task_id, revisions, workspace).await,
+            StageResult::Cancelled => {
+                return cancelled(board, &task_id, revisions, workspace).await
+            }
             StageResult::Failed(reason) => {
                 break RunResult::Failed {
                     stage: RunStage::Implementing,
@@ -197,7 +196,9 @@ pub async fn execute_run(
         .await
         {
             StageResult::Ok(summary) => summary.unwrap_or_default(),
-            StageResult::Cancelled => return cancelled(board, &task_id, revisions, workspace).await,
+            StageResult::Cancelled => {
+                return cancelled(board, &task_id, revisions, workspace).await
+            }
             StageResult::Failed(reason) => {
                 break RunResult::NeedsAttention {
                     reason: format!("Review could not be completed: {reason}"),
@@ -258,7 +259,11 @@ pub async fn execute_run(
                     }
                     // Documentation is a nicety; its failure does not undo the work.
                     StageResult::Failed(reason) => {
-                        note(&progress, &format!("Documentation pass did not finish: {reason}")).await;
+                        note(
+                            &progress,
+                            &format!("Documentation pass did not finish: {reason}"),
+                        )
+                        .await;
                     }
                     StageResult::Ok(_) => {}
                 }
@@ -411,10 +416,9 @@ async fn run_stage(
             let stage_result = match outcome.completion {
                 Completion::Succeeded => StageResult::Ok(summary.clone()),
                 Completion::Cancelled => StageResult::Cancelled,
-                Completion::TimedOut => StageResult::Failed(format!(
-                    "{} ran past its time limit.",
-                    profile.name
-                )),
+                Completion::TimedOut => {
+                    StageResult::Failed(format!("{} ran past its time limit.", profile.name))
+                }
                 Completion::Failed => StageResult::Failed(format!(
                     "{} exited with code {}. Last output:\n{}",
                     profile.name,
@@ -482,7 +486,15 @@ async fn cancelled(
     workspace: &dyn Workspace,
 ) -> RunOutcome {
     let changes = workspace.summarise().await.unwrap_or_default();
-    finish(board, task_id, None, RunResult::Cancelled, revisions, changes).await
+    finish(
+        board,
+        task_id,
+        None,
+        RunResult::Cancelled,
+        revisions,
+        changes,
+    )
+    .await
 }
 
 /// Leave the board in a coherent state and produce the run's outcome.
@@ -559,7 +571,10 @@ fn compose_summary(result: &RunResult, revisions: u32, changes: &ChangeSummary) 
             out.push_str(&format!("- `{file}`\n"));
         }
         if changes.files.len() > shown.len() {
-            out.push_str(&format!("- …and {} more\n", changes.files.len() - shown.len()));
+            out.push_str(&format!(
+                "- …and {} more\n",
+                changes.files.len() - shown.len()
+            ));
         }
     }
 
@@ -1063,14 +1078,11 @@ mod tests {
     async fn an_unclear_verdict_is_never_treated_as_approval() {
         let board = FakeBoard::default();
         let workspace = FakeWorkspace::with_changes();
-        let executor = ScriptedExecutor::with(
-            Role::Implementer,
-            vec![StageScript::Says("done".into())],
-        )
-        .and(
-            Role::Reviewer,
-            vec![StageScript::Says("Seems fine to me.".into())],
-        );
+        let executor =
+            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Says("done".into())]).and(
+                Role::Reviewer,
+                vec![StageScript::Says("Seems fine to me.".into())],
+            );
 
         let (outcome, _) = run(
             config(Pipeline::default(), &[Role::Implementer, Role::Reviewer]),
@@ -1117,8 +1129,7 @@ mod tests {
     async fn a_failing_agent_returns_the_task_with_a_blocker() {
         let board = FakeBoard::default();
         let workspace = FakeWorkspace::with_changes();
-        let executor =
-            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Exits(1)]);
+        let executor = ScriptedExecutor::with(Role::Implementer, vec![StageScript::Exits(1)]);
 
         let (outcome, _) = run(
             config(Pipeline::default(), &[Role::Implementer, Role::Reviewer]),
@@ -1137,15 +1148,17 @@ mod tests {
             board.statuses(),
             vec![TaskStatus::InProgress, TaskStatus::Todo]
         );
-        assert_eq!(board.blockers_set(), vec!["Accelerate: failed during implementing"]);
+        assert_eq!(
+            board.blockers_set(),
+            vec!["Accelerate: failed during implementing"]
+        );
     }
 
     #[tokio::test]
     async fn a_missing_cli_says_so_plainly() {
         let board = FakeBoard::default();
         let workspace = FakeWorkspace::with_changes();
-        let executor =
-            ScriptedExecutor::with(Role::Implementer, vec![StageScript::NotInstalled]);
+        let executor = ScriptedExecutor::with(Role::Implementer, vec![StageScript::NotInstalled]);
 
         let (outcome, _) = run(
             config(Pipeline::default(), &[Role::Implementer]),
@@ -1200,7 +1213,9 @@ mod tests {
         let workspace = FakeWorkspace::with_changes();
         let executor = ScriptedExecutor::with(
             Role::Orchestrator,
-            vec![StageScript::Says("Edit src/limiter.rs and add a bucket.".into())],
+            vec![StageScript::Says(
+                "Edit src/limiter.rs and add a bucket.".into(),
+            )],
         )
         .and(Role::Implementer, vec![StageScript::Says("done".into())]);
 
@@ -1228,9 +1243,8 @@ mod tests {
     async fn a_failed_plan_does_not_stop_the_work() {
         let board = FakeBoard::default();
         let workspace = FakeWorkspace::with_changes();
-        let executor =
-            ScriptedExecutor::with(Role::Orchestrator, vec![StageScript::Exits(2)])
-                .and(Role::Implementer, vec![StageScript::Says("done".into())]);
+        let executor = ScriptedExecutor::with(Role::Orchestrator, vec![StageScript::Exits(2)])
+            .and(Role::Implementer, vec![StageScript::Says("done".into())]);
 
         let pipeline = Pipeline {
             plan: true,
@@ -1254,15 +1268,16 @@ mod tests {
     async fn a_documentation_pass_runs_only_after_approval() {
         let board = FakeBoard::default();
         let workspace = FakeWorkspace::with_changes();
-        let executor = ScriptedExecutor::with(
-            Role::Implementer,
-            vec![StageScript::Says("done".into())],
-        )
-        .and(
-            Role::Reviewer,
-            vec![StageScript::Says("VERDICT: approve".into())],
-        )
-        .and(Role::Documenter, vec![StageScript::Says("README updated".into())]);
+        let executor =
+            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Says("done".into())])
+                .and(
+                    Role::Reviewer,
+                    vec![StageScript::Says("VERDICT: approve".into())],
+                )
+                .and(
+                    Role::Documenter,
+                    vec![StageScript::Says("README updated".into())],
+                );
 
         let pipeline = Pipeline {
             document: true,
@@ -1290,15 +1305,13 @@ mod tests {
     async fn documentation_is_skipped_when_the_work_was_rejected() {
         let board = FakeBoard::default();
         let workspace = FakeWorkspace::with_changes();
-        let executor = ScriptedExecutor::with(
-            Role::Implementer,
-            vec![StageScript::Says("done".into())],
-        )
-        .and(
-            Role::Reviewer,
-            vec![StageScript::Says("VERDICT: request_changes".into())],
-        )
-        .and(Role::Documenter, vec![StageScript::Says("docs".into())]);
+        let executor =
+            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Says("done".into())])
+                .and(
+                    Role::Reviewer,
+                    vec![StageScript::Says("VERDICT: request_changes".into())],
+                )
+                .and(Role::Documenter, vec![StageScript::Says("docs".into())]);
 
         let pipeline = Pipeline {
             document: true,
@@ -1401,14 +1414,11 @@ mod tests {
         let board = FakeBoard::default();
         let mut workspace = FakeWorkspace::with_changes();
         workspace.integrate_fails = true;
-        let executor = ScriptedExecutor::with(
-            Role::Implementer,
-            vec![StageScript::Says("done".into())],
-        )
-        .and(
-            Role::Reviewer,
-            vec![StageScript::Says("VERDICT: approve".into())],
-        );
+        let executor =
+            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Says("done".into())]).and(
+                Role::Reviewer,
+                vec![StageScript::Says("VERDICT: approve".into())],
+            );
 
         let (outcome, _) = run(
             config(Pipeline::default(), &[Role::Implementer, Role::Reviewer]),
@@ -1433,14 +1443,11 @@ mod tests {
     async fn the_activity_feed_reports_every_stage() {
         let board = FakeBoard::default();
         let workspace = FakeWorkspace::with_changes();
-        let executor = ScriptedExecutor::with(
-            Role::Implementer,
-            vec![StageScript::Says("done".into())],
-        )
-        .and(
-            Role::Reviewer,
-            vec![StageScript::Says("VERDICT: approve".into())],
-        );
+        let executor =
+            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Says("done".into())]).and(
+                Role::Reviewer,
+                vec![StageScript::Says("VERDICT: approve".into())],
+            );
 
         let (_, progress) = run(
             config(Pipeline::default(), &[Role::Implementer, Role::Reviewer]),
@@ -1467,8 +1474,6 @@ mod tests {
                 RunStage::Integrating
             ]
         );
-        assert!(progress
-            .iter()
-            .any(|p| matches!(p, RunProgress::Output(_))));
+        assert!(progress.iter().any(|p| matches!(p, RunProgress::Output(_))));
     }
 }

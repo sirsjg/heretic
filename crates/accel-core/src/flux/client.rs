@@ -23,7 +23,13 @@ impl FluxError {
     /// True when the failure is an authentication problem the user can fix by
     /// entering an API key in Settings.
     pub fn is_auth(&self) -> bool {
-        matches!(self, FluxError::Api { status: 401 | 403, .. })
+        matches!(
+            self,
+            FluxError::Api {
+                status: 401 | 403,
+                ..
+            }
+        )
     }
 
     pub fn is_not_found(&self) -> bool {
@@ -106,7 +112,10 @@ impl FluxClient {
                 .unwrap_or_else(|| {
                     let trimmed = body.trim();
                     if trimmed.is_empty() {
-                        status.canonical_reason().unwrap_or("unknown error").to_string()
+                        status
+                            .canonical_reason()
+                            .unwrap_or("unknown error")
+                            .to_string()
                     } else {
                         trimmed.to_string()
                     }
@@ -132,11 +141,8 @@ impl FluxClient {
     }
 
     pub async fn get_project(&self, project_id: &str) -> Result<Project> {
-        self.send(self.request(
-            reqwest::Method::GET,
-            &format!("/api/projects/{project_id}"),
-        ))
-        .await
+        self.send(self.request(reqwest::Method::GET, &format!("/api/projects/{project_id}")))
+            .await
     }
 
     pub async fn list_epics(&self, project_id: &str) -> Result<Vec<Epic>> {

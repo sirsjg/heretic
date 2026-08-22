@@ -297,7 +297,9 @@ impl Settings {
     }
 
     pub fn binding_mut(&mut self, project_id: &str) -> Option<&mut ProjectBinding> {
-        self.bindings.iter_mut().find(|b| b.project_id == project_id)
+        self.bindings
+            .iter_mut()
+            .find(|b| b.project_id == project_id)
     }
 
     /// Insert or replace a project binding.

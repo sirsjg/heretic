@@ -18,5 +18,5 @@ pub mod worktree;
 
 pub use config::{Isolation, ModelProfile, Pipeline, ProjectBinding, Role, RunnerKind, Settings};
 pub use flux::{FluxClient, FluxConfig, FluxError, FluxEvent, FluxWatcher};
-pub use orchestrator::{Engine, EngineEvent, RunRecord, RunStage, RunStatus};
 pub use model::{Epic, Priority, Project, Task, TaskStatus};
+pub use orchestrator::{Engine, EngineEvent, RunRecord, RunStage, RunStatus};

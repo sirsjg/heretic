@@ -427,27 +427,26 @@ function TaskList({
               </div>
             </div>
 
-            <Button
-              size="sm"
-              variant={runnable ? "secondary" : "ghost"}
-              icon={<IconPlay className="size-3" />}
-              disabled={
-                !hasBinding ||
-                task.status === "in_progress" ||
-                task.status === "done"
-              }
-              onClick={() => onRun(task.id)}
-              className={cx(!runnable && "opacity-0 group-hover:opacity-100")}
-              title={
-                !hasBinding
-                  ? "Set this project's folder first"
-                  : runnable
-                    ? "Start this task"
-                    : `${ineligible} — start it anyway`
-              }
-            >
-              Run
-            </Button>
+            {/* Finished work offers no action, so it gets no control. */}
+            {task.status !== "done" && (
+              <Button
+                size="sm"
+                variant={runnable ? "secondary" : "ghost"}
+                icon={<IconPlay className="size-3" />}
+                disabled={!hasBinding || task.status === "in_progress"}
+                onClick={() => onRun(task.id)}
+                className={cx(!runnable && "opacity-0 group-hover:opacity-100")}
+                title={
+                  !hasBinding
+                    ? "Set this project's folder first"
+                    : runnable
+                      ? "Start this task"
+                      : `${ineligible} — start it anyway`
+                }
+              >
+                Run
+              </Button>
+            )}
           </li>
         );
       })}

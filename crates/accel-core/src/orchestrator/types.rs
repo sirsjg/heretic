@@ -108,11 +108,19 @@ pub struct RunFeedItem {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunProgress {
     /// A stage began.
-    StageStarted { stage: RunStage, role: Option<Role>, agent: Option<String> },
+    StageStarted {
+        stage: RunStage,
+        role: Option<Role>,
+        agent: Option<String>,
+    },
     /// An agent said something.
     Output(RunFeedItem),
     /// A stage ended.
-    StageFinished { stage: RunStage, ok: bool, summary: Option<String> },
+    StageFinished {
+        stage: RunStage,
+        ok: bool,
+        summary: Option<String>,
+    },
     /// The reviewer sent the work back; the implementer is going round again.
     RevisionRequested { attempt: u32, notes: String },
     /// A note from the engine itself, not from an agent.

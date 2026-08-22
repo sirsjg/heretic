@@ -48,7 +48,9 @@ impl TaskContext {
         }
 
         if !self.task.acceptance_criteria.is_empty() {
-            out.push_str("\n### Acceptance criteria\n\nThe task is done when all of these hold:\n\n");
+            out.push_str(
+                "\n### Acceptance criteria\n\nThe task is done when all of these hold:\n\n",
+            );
             for criterion in &self.task.acceptance_criteria {
                 out.push_str(&format!("- [ ] {criterion}\n"));
             }
@@ -83,9 +85,10 @@ fn recent_comments(comments: &[TaskComment], limit: usize) -> String {
     comments[start..]
         .iter()
         .map(|comment| {
-            let who = comment.agent_name.as_deref().unwrap_or_else(|| {
-                comment.author.as_deref().unwrap_or("note")
-            });
+            let who = comment
+                .agent_name
+                .as_deref()
+                .unwrap_or_else(|| comment.author.as_deref().unwrap_or("note"));
             format!("- **{}**: {}", who, comment.body.trim())
         })
         .collect::<Vec<_>>()
@@ -290,7 +293,10 @@ pub fn parse_verdict(text: &str) -> Verdict {
             continue;
         };
 
-        let value = rest.trim().trim_matches(['*', '`', ' ']).to_ascii_lowercase();
+        let value = rest
+            .trim()
+            .trim_matches(['*', '`', ' '])
+            .to_ascii_lowercase();
         verdict = match value.as_str() {
             "approve" | "approved" => Verdict::Approved,
             "request_changes" | "request changes" | "changes_requested" => {
@@ -440,7 +446,10 @@ mod tests {
 
     #[test]
     fn verdicts_are_read_from_the_transcript() {
-        assert_eq!(parse_verdict("Looks good.\nVERDICT: approve"), Verdict::Approved);
+        assert_eq!(
+            parse_verdict("Looks good.\nVERDICT: approve"),
+            Verdict::Approved
+        );
         assert_eq!(
             parse_verdict("Problems found.\nVERDICT: request_changes"),
             Verdict::ChangesRequested
@@ -462,7 +471,10 @@ mod tests {
 
     #[test]
     fn a_missing_verdict_is_never_read_as_approval() {
-        assert_eq!(parse_verdict("This all looks fine to me."), Verdict::Unclear);
+        assert_eq!(
+            parse_verdict("This all looks fine to me."),
+            Verdict::Unclear
+        );
         assert_eq!(parse_verdict(""), Verdict::Unclear);
         assert_eq!(parse_verdict("VERDICT: maybe"), Verdict::Unclear);
     }

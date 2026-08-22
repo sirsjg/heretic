@@ -309,7 +309,11 @@ mod tests {
         }
     }
 
-    async fn run(command: AgentCommand, cancel: CancelToken, timeout: Option<Duration>) -> AgentOutcome {
+    async fn run(
+        command: AgentCommand,
+        cancel: CancelToken,
+        timeout: Option<Duration>,
+    ) -> AgentOutcome {
         let (tx, mut rx) = mpsc::channel(64);
         tokio::spawn(async move { while rx.recv().await.is_some() {} });
         run_agent(command, "", Path::new("."), timeout, cancel, tx)

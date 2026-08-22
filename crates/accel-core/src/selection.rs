@@ -70,7 +70,11 @@ impl<'a> BoardSnapshot<'a> {
         self.epics
             .iter()
             .filter(|epic| epic.auto)
-            .filter(|epic| epic.depends_on.iter().all(|dep| done.contains(dep.as_str())))
+            .filter(|epic| {
+                epic.depends_on
+                    .iter()
+                    .all(|dep| done.contains(dep.as_str()))
+            })
             .map(|epic| (epic.id.as_str(), epic))
             .collect()
     }
