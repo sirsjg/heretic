@@ -523,6 +523,25 @@ impl Engine {
             RunProgress::RevisionRequested { attempt, .. } => {
                 self.update(run_id, |run| run.revisions = attempt).await;
             }
+            RunProgress::Command { stage, command } => {
+                let item = RunFeedItem {
+                    stage,
+                    role: None,
+                    event: AgentEvent::Raw {
+                        text: format!("$ {command}"),
+                    },
+                };
+                {
+                    let mut runs = self.runs.write().await;
+                    if let Some(run) = runs.get_mut(run_id) {
+                        run.push_feed(item.clone());
+                    }
+                }
+                self.emit(EngineEvent::RunOutput {
+                    run_id: run_id.to_string(),
+                    item,
+                });
+            }
             RunProgress::Note { message } => {
                 let item = RunFeedItem {
                     stage: self

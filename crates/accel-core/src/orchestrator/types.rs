@@ -125,6 +125,11 @@ pub enum RunProgress {
     RevisionRequested { attempt: u32, notes: String },
     /// A note from the engine itself, not from an agent.
     Note { message: String },
+    /// The command a stage is about to run.
+    ///
+    /// Worth recording: when a backend rejects an argument, the argument list is
+    /// the whole answer, and without it the failure is a guessing game.
+    Command { stage: RunStage, command: String },
 }
 
 /// What a finished run produced.

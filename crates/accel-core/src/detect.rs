@@ -248,20 +248,24 @@ pub async fn probe_host(host: &ModelHost) -> HostProbe {
         }
     };
 
+    // Ollama's native API first: it reports parameter counts and quantisation
+    // that the OpenAI-shaped listing does not. A server that answers this path
+    // with something else is not Ollama, so fall through rather than give up —
+    // several OpenAI-compatible servers respond to it.
     if let Ok(response) = client.get(format!("{base}/api/tags")).send().await {
         if response.status().is_success() {
             if let Ok(body) = response.text().await {
-                let version = ollama_version(&client, &base).await;
-                let warning = version.as_deref().filter(|v| ollama_too_old(v)).map(|v| {
-                    let (major, minor, patch) = MINIMUM_OLLAMA;
-                    format!(
-                        "Ollama {v} is too old for Codex, which needs {major}.{minor}.{patch} or \
-newer. Update it on this host, or runs using its models will fail."
-                    )
-                });
+                if let Ok(models) = parse_ollama_tags(&body) {
+                    let version = ollama_version(&client, &base).await;
+                    let warning = version.as_deref().filter(|v| ollama_too_old(v)).map(|v| {
+                        let (major, minor, patch) = MINIMUM_OLLAMA;
+                        format!(
+                            "Ollama {v} is too old for Codex, which needs {major}.{minor}.{patch} \
+or newer. Update it on this host, or runs using its models will fail."
+                        )
+                    });
 
-                return match parse_ollama_tags(&body) {
-                    Ok(models) => HostProbe {
+                    return HostProbe {
                         host: host.clone(),
                         reachable: true,
                         kind: Some(HostKind::Ollama),
@@ -269,17 +273,8 @@ newer. Update it on this host, or runs using its models will fail."
                         problem: None,
                         version,
                         warning,
-                    },
-                    Err(error) => HostProbe {
-                        host: host.clone(),
-                        reachable: true,
-                        kind: Some(HostKind::Ollama),
-                        models: Vec::new(),
-                        problem: Some(error),
-                        version,
-                        warning,
-                    },
-                };
+                    };
+                }
             }
         }
     }
@@ -388,7 +383,9 @@ pub fn parse_ollama_tags(body: &str) -> std::result::Result<Vec<DiscoveredModel>
     }
     #[derive(Deserialize)]
     struct Tags {
-        #[serde(default)]
+        /// Required on purpose. Without it an OpenAI-shaped body parses as an
+        /// Ollama holding nothing, which is worse than failing: the host looks
+        /// present but empty. Codex's own decoder draws the same line.
         models: Vec<Entry>,
     }
 
@@ -708,6 +705,29 @@ mod tests {
         let probe = probe_host(&host_at(format!("{base}/v1"))).await;
         assert!(probe.reachable);
         assert_eq!(probe.models[0].id, "llama3.1:8b");
+    }
+
+    #[tokio::test]
+    async fn a_server_answering_api_tags_with_openai_json_is_still_understood() {
+        // Some OpenAI-compatible servers respond to /api/tags with their own
+        // shape. Treating that as a broken Ollama would hide a usable host.
+        let base = fake_server(vec![
+            (
+                "/api/tags",
+                r#"{"object":"list","data":[{"id":"qwen3.8:latest","owned_by":"library"}]}"#,
+            ),
+            (
+                "/v1/models",
+                r#"{"object":"list","data":[{"id":"qwen3.8:latest","owned_by":"library"}]}"#,
+            ),
+        ])
+        .await;
+
+        let probe = probe_host(&host_at(base)).await;
+        assert!(probe.reachable);
+        assert_eq!(probe.kind, Some(HostKind::OpenAiCompatible));
+        assert_eq!(probe.models[0].id, "qwen3.8:latest");
+        assert!(probe.problem.is_none());
     }
 
     #[tokio::test]

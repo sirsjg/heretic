@@ -368,6 +368,13 @@ async fn run_stage(
         })
         .await;
 
+    let _ = progress
+        .send(RunProgress::Command {
+            stage,
+            command: crate::runner::build_command(profile, prompt_text).display(prompt_text),
+        })
+        .await;
+
     // Forward the agent's events into the run feed as they arrive.
     let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
     let feed = progress.clone();
@@ -1437,6 +1444,40 @@ mod tests {
         }
         // The task must not be closed when its work never landed.
         assert!(!board.statuses().contains(&TaskStatus::Done));
+    }
+
+    #[tokio::test]
+    async fn the_command_is_recorded_once_per_stage() {
+        let board = FakeBoard::default();
+        let workspace = FakeWorkspace::with_changes();
+        let executor =
+            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Says("done".into())]);
+
+        let pipeline = Pipeline {
+            review: false,
+            ..Pipeline::default()
+        };
+        let (_, progress) = run(
+            config(pipeline, &[Role::Implementer]),
+            &board,
+            &workspace,
+            &executor,
+            CancelToken::new(),
+        )
+        .await;
+
+        let commands: Vec<&String> = progress
+            .iter()
+            .filter_map(|p| match p {
+                RunProgress::Command { command, .. } => Some(command),
+                _ => None,
+            })
+            .collect();
+
+        // Exactly one per agent stage, and it must not leak the prompt.
+        assert_eq!(commands.len(), 1, "{commands:?}");
+        assert!(commands[0].starts_with("claude "), "{}", commands[0]);
+        assert!(commands[0].contains("'<prompt>'"), "{}", commands[0]);
     }
 
     #[tokio::test]

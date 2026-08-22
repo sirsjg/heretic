@@ -56,6 +56,11 @@ interface State {
 
 let toastId = 0;
 
+/// Engine events are subscribed once for the process. React re-mounts the app
+/// (StrictMode does it deliberately in development), and a second subscription
+/// would apply every event twice — which shows up as a duplicated feed.
+let unsubscribeEngine: (() => void) | null = null;
+
 /** The binding for the selected project, if it has one. */
 export function currentBinding(state: State): ProjectBinding | null {
   if (!state.settings || !state.selectedProjectId) return null;
@@ -113,7 +118,10 @@ export const useStore = create<State>((set, get) => ({
       get().notify("error", describe(error));
     }
 
-    onEngineEvent((event) => applyEngineEvent(event, set, get));
+    unsubscribeEngine?.();
+    unsubscribeEngine = onEngineEvent((event) =>
+      applyEngineEvent(event, set, get),
+    );
   },
 
   async selectProject(projectId) {
@@ -285,10 +293,11 @@ function applyEngineEvent(
     case "run_updated": {
       const runs = get().runs.slice();
       const index = runs.findIndex((r) => r.id === event.run.id);
-      // Keep the feed we have accumulated: run_updated carries a summary that
-      // may lag the output events already applied.
-      const feed = index >= 0 ? runs[index]!.feed : event.run.feed;
-      const merged = { ...event.run, feed: feed.length ? feed : event.run.feed };
+      // Once a run is known, its feed is owned by the run_output stream. Taking
+      // the summary's copy again would re-add items already applied, which is
+      // how a feed ends up showing every line twice.
+      const existing = index >= 0 ? runs[index] : undefined;
+      const merged = { ...event.run, feed: existing ? existing.feed : event.run.feed };
       if (index >= 0) runs[index] = merged;
       else runs.unshift(merged);
       set({ runs });
