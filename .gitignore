@@ -15,3 +15,6 @@ src-tauri/target
 .DS_Store
 *.local
 .env
+
+# TypeScript incremental build state
+*.tsbuildinfo
