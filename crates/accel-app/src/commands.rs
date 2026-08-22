@@ -102,12 +102,33 @@ pub async fn test_connection(state: State<'_, AppState>) -> Response<ConnectionS
 
     // Listing projects exercises the whole path: the proxy, then Flux's own key.
     match client.list_projects().await {
-        Ok(_) => Ok(ConnectionState {
-            connected: true,
-            error: None,
-            kind: "ok",
-            warnings,
-        }),
+        Ok(_) => {
+            // Success is not proof of authentication. A server that requires a
+            // key still answers a keyless GET with the public projects — an
+            // empty list for a private board, which looks exactly like a
+            // connected server with nothing on it.
+            if let Ok(status) = client.auth_status().await {
+                if status.needs_key() {
+                    let base = settings.flux.normalised_base();
+                    return Ok(ConnectionState {
+                        connected: false,
+                        error: Some(format!(
+                            "This Flux server requires an API key, and none was accepted — so only \
+public projects are visible. Create a key at {base}/auth and paste it above."
+                        )),
+                        kind: "flux_auth",
+                        warnings,
+                    });
+                }
+            }
+
+            Ok(ConnectionState {
+                connected: true,
+                error: None,
+                kind: "ok",
+                warnings,
+            })
+        }
         Err(error) => {
             let (kind, message) = if error.is_proxy_challenge() {
                 ("proxy_challenge", error.to_string())

@@ -3,5 +3,5 @@
 pub mod client;
 pub mod events;
 
-pub use client::{FluxClient, FluxConfig, FluxError};
+pub use client::{AuthStatus, FluxClient, FluxConfig, FluxError};
 pub use events::{BoardChange, FluxEvent, FluxWatcher};

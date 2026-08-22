@@ -134,6 +134,30 @@ different header."
     }
 }
 
+/// What Flux says about the credentials it just saw.
+///
+/// Worth asking for explicitly: a keyless request to a server that requires one
+/// still answers `200` with the *public* projects, which for a private board is
+/// an empty list. Left undiagnosed that reads as "connected, no work to do"
+/// rather than "you never authenticated".
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AuthStatus {
+    #[serde(default)]
+    pub authenticated: bool,
+    #[serde(default)]
+    pub key_type: Option<String>,
+    /// Whether this server rejects anonymous access.
+    #[serde(default, rename = "authRequired")]
+    pub auth_required: bool,
+}
+
+impl AuthStatus {
+    /// True when the server wants a key and we did not present a valid one.
+    pub fn needs_key(&self) -> bool {
+        self.auth_required && !self.authenticated
+    }
+}
+
 /// An async client for the Flux REST API.
 #[derive(Debug, Clone)]
 pub struct FluxClient {
@@ -230,6 +254,12 @@ impl FluxClient {
     pub async fn health(&self) -> Result<bool> {
         let response = self.request(reqwest::Method::GET, "/health").send().await?;
         Ok(response.status().is_success())
+    }
+
+    /// Ask Flux whether it accepted our credentials.
+    pub async fn auth_status(&self) -> Result<AuthStatus> {
+        self.send(self.request(reqwest::Method::GET, "/api/auth/status"))
+            .await
     }
 
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
@@ -487,5 +517,40 @@ mod tests {
             detect_proxy_challenge(401, "application/json", r#"{"error":"Unauthorized"}"#)
                 .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+mod auth_status_tests {
+    use super::*;
+
+    fn parse(json: &str) -> AuthStatus {
+        serde_json::from_str(json).expect("auth status should parse")
+    }
+
+    #[test]
+    fn a_keyless_request_to_a_locked_server_is_recognised() {
+        // Exactly what a published Flux server answers when no key is presented.
+        let status = parse(r#"{"authenticated":false,"keyType":"anonymous","authRequired":true}"#);
+        assert!(status.needs_key());
+    }
+
+    #[test]
+    fn an_authenticated_request_needs_nothing_more() {
+        let status = parse(r#"{"authenticated":true,"keyType":"server","authRequired":true}"#);
+        assert!(!status.needs_key());
+    }
+
+    #[test]
+    fn an_open_server_never_asks_for_a_key() {
+        let status = parse(r#"{"authenticated":false,"keyType":"anonymous","authRequired":false}"#);
+        assert!(!status.needs_key());
+    }
+
+    #[test]
+    fn an_older_server_that_omits_the_field_is_not_nagged() {
+        // Forward/backward compatibility: absent means "not required".
+        let status = parse(r#"{"authenticated":false}"#);
+        assert!(!status.needs_key());
     }
 }

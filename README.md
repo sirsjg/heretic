@@ -177,6 +177,25 @@ never published directly.
 Proxies that use their own header (Cloudflare Access) or a cookie have no such
 problem: keep your Flux API key as well, and both layers stay authenticated.
 
+### Check what is actually in front of your server
+
+Worth confirming before configuring anything, because a Flux server on a public
+domain is not necessarily behind a proxy at all:
+
+```bash
+curl -si https://your-flux-host/api/auth/status
+```
+
+- A JSON body such as `{"authenticated":false,"authRequired":true}` means you are
+  talking to **Flux directly** — no proxy is intercepting the API. Choose
+  "Nothing in front of Flux" and set a Flux API key.
+- An HTML sign-in page, or a redirect to an identity provider, means a proxy
+  **is** in the way. Configure a credential above.
+
+Note that a CDN in front of your server (a `server: cloudflare` header, say) is
+not the same thing as Cloudflare **Access**. Only the latter authenticates
+requests.
+
 ### When it goes wrong
 
 A proxy that rejects you answers with its own sign-in page, not a Flux error —
@@ -185,6 +204,12 @@ and because HTTP clients follow redirects, that arrives as a perfectly ordinary
 where it can, rather than reporting an unintelligible parse failure. The status
 in Settings distinguishes *blocked by the proxy* from *Flux rejected the key*,
 because the fixes are different.
+
+Accelerate also catches a subtler case. A Flux server that requires a key still
+answers a keyless `GET /api/projects` with `200` and the *public* projects — an
+empty list when your board is private. That looks exactly like a healthy
+connection with no work on it, so Accelerate checks `/api/auth/status` as well
+and tells you a key is needed rather than showing you an empty board.
 
 Use HTTPS. Accelerate warns if you send proxy credentials over plain `http://`
 to anything other than localhost.
