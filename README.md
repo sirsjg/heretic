@@ -126,6 +126,71 @@ args:     --model {{model}} --message {{prompt}}
 
 <br>
 
+## Behind an identity proxy
+
+A Flux server published on a domain usually sits behind something like
+Cloudflare Access, oauth2-proxy, Authelia, Pomerium or Tailscale. That proxy
+authenticates the request **before** Flux ever sees it, so there are two
+credentials in play: the proxy's, and then Flux's own API key.
+
+Settings → **Access** covers both. Whatever you configure is used on every
+request, including the live event stream.
+
+### Which option to pick
+
+| Your proxy | Choose | Notes |
+|---|---|---|
+| Cloudflare Access | Service token | Two headers, no clash with Flux's key. Does not expire. |
+| oauth2-proxy, Pomerium | Bearer token | Uses `Authorization` — see the clash below. |
+| Authelia, Traefik forward-auth | Sign in, or Custom headers | Cookie-based; sign-in captures it for you. |
+| Tailscale / VPN only | Nothing in front of Flux | The network is the boundary; no credential needed. |
+| Anything else | Custom headers | Arbitrary header name/value pairs. |
+
+**Prefer a service token for unattended work.** Signing in is convenient, but a
+browser session expires — and a run that starts at 2am is not there to sign in
+again. Service tokens do not expire.
+
+### Signing in
+
+**Access → Sign in** opens a real browser window at your Flux URL. Complete your
+provider's flow as normal; Accelerate watches for the resulting session cookie,
+verifies it can reach the Flux API with it, then closes the window and keeps it.
+
+### The `Authorization` clash
+
+Flux reads its own API key from `Authorization: Bearer …`. If your proxy wants
+that same header, only one credential fits. Accelerate gives the header to the
+proxy and warns you, because the alternative — silently dropping your proxy
+credential — would just look like an outage.
+
+The fix is to let the proxy be the security boundary:
+
+```bash
+# Flux, reachable only through the proxy
+FLUX_ALLOW_ANONYMOUS=1 flux serve
+```
+
+Then leave the API key empty in Accelerate. Only do this when Flux is genuinely
+unreachable except through the proxy — bound to loopback or an internal network,
+never published directly.
+
+Proxies that use their own header (Cloudflare Access) or a cookie have no such
+problem: keep your Flux API key as well, and both layers stay authenticated.
+
+### When it goes wrong
+
+A proxy that rejects you answers with its own sign-in page, not a Flux error —
+and because HTTP clients follow redirects, that arrives as a perfectly ordinary
+`200` full of HTML. Accelerate detects this and says so, naming the provider
+where it can, rather than reporting an unintelligible parse failure. The status
+in Settings distinguishes *blocked by the proxy* from *Flux rejected the key*,
+because the fixes are different.
+
+Use HTTPS. Accelerate warns if you send proxy credentials over plain `http://`
+to anything other than localhost.
+
+<br>
+
 ## Layout
 
 ```
@@ -146,6 +211,14 @@ tested without launching a desktop app:
 ```bash
 cargo test            # engine, including real subprocess and git behaviour
 pnpm typecheck        # interface
+```
+
+There is also a suite that runs against a live Flux server behind a proxy. It is
+ignored by default since it needs both running:
+
+```bash
+FLUX_PROXY_URL=http://localhost:8080 FLUX_API_KEY=flx_… \
+  cargo test --test proxy_access -- --ignored
 ```
 
 The interface also runs in a plain browser against a mock engine, which is

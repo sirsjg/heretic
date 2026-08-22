@@ -3,6 +3,7 @@
 use crate::model::{Epic, Project, Task, TaskComment, TaskStatus};
 use serde::Serialize;
 use serde_json::json;
+use std::collections::BTreeMap;
 
 /// Errors surfaced by the Flux client.
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +18,11 @@ pub enum FluxError {
 
     #[error("flux returned a response Accelerate could not parse: {0}")]
     Decode(String),
+
+    /// The identity proxy in front of Flux answered instead of Flux — almost
+    /// always a sign-in page, because this client is not authenticated with it.
+    #[error("{0}")]
+    ProxyChallenge(String),
 }
 
 impl FluxError {
@@ -32,6 +38,13 @@ impl FluxError {
         )
     }
 
+    /// True when the proxy in front of Flux rejected us, rather than Flux itself.
+    ///
+    /// Worth distinguishing: the fix is a proxy credential, not a Flux API key.
+    pub fn is_proxy_challenge(&self) -> bool {
+        matches!(self, FluxError::ProxyChallenge(_))
+    }
+
     pub fn is_not_found(&self) -> bool {
         matches!(self, FluxError::Api { status: 404, .. })
     }
@@ -40,13 +53,31 @@ impl FluxError {
 pub type Result<T> = std::result::Result<T, FluxError>;
 
 /// Connection settings for a Flux server.
+///
+/// A Flux server published on a domain usually sits behind an identity proxy
+/// (Cloudflare Access, oauth2-proxy, Authelia, Pomerium and friends). That proxy
+/// authenticates the request *before* Flux ever sees it, so Accelerate has to
+/// satisfy two layers: the proxy's credential, and then Flux's own API key.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct FluxConfig {
-    /// Base URL, e.g. `http://localhost:3000`.
+    /// Base URL, e.g. `http://localhost:3000` or `https://flux.example.com`.
     pub base_url: String,
     /// Optional API key. Flux servers are locked by default, so this is normally set.
+    ///
+    /// Sent as `Authorization: Bearer …` unless [`Self::headers`] already sets
+    /// `Authorization`, since the header can only carry one credential.
     #[serde(default)]
     pub api_key: Option<String>,
+    /// Extra headers sent on every request, for the proxy in front of Flux.
+    ///
+    /// Cloudflare Access service tokens live here as `CF-Access-Client-Id` and
+    /// `CF-Access-Client-Secret`.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// Session cookie for proxies that authenticate with one, as it would appear
+    /// in a `Cookie` header. Populated by signing in, or pasted by hand.
+    #[serde(default)]
+    pub cookie: Option<String>,
 }
 
 impl Default for FluxConfig {
@@ -54,6 +85,8 @@ impl Default for FluxConfig {
         Self {
             base_url: "http://localhost:3000".to_string(),
             api_key: None,
+            headers: BTreeMap::new(),
+            cookie: None,
         }
     }
 }
@@ -61,6 +94,43 @@ impl Default for FluxConfig {
 impl FluxConfig {
     pub fn normalised_base(&self) -> String {
         self.base_url.trim_end_matches('/').to_string()
+    }
+
+    /// Whether the caller has claimed the `Authorization` header for the proxy,
+    /// which means Flux's own API key cannot also be sent on it.
+    pub fn authorization_taken_by_proxy(&self) -> bool {
+        self.headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("authorization"))
+    }
+
+    /// Problems worth telling the user about before they hit a confusing 401.
+    pub fn access_warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if self.authorization_taken_by_proxy()
+            && self.api_key.as_deref().is_some_and(|k| !k.is_empty())
+        {
+            warnings.push(
+                "Your proxy uses the Authorization header, so Flux's own API key cannot be sent as well. \
+Run Flux with FLUX_ALLOW_ANONYMOUS=1 behind the proxy and clear the API key, or move the proxy onto a \
+different header."
+                    .to_string(),
+            );
+        }
+
+        if self.base_url.starts_with("http://")
+            && !self.base_url.contains("localhost")
+            && !self.base_url.contains("127.0.0.1")
+            && (self.cookie.is_some() || !self.headers.is_empty())
+        {
+            warnings.push(
+                "This server is plain HTTP, so proxy credentials travel unencrypted. Use HTTPS."
+                    .to_string(),
+            );
+        }
+
+        warnings
     }
 }
 
@@ -89,9 +159,23 @@ impl FluxClient {
 
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let mut builder = self.http.request(method, self.url(path));
-        if let Some(key) = self.config.api_key.as_deref().filter(|k| !k.is_empty()) {
-            builder = builder.bearer_auth(key);
+
+        // Flux's own key, unless the proxy has claimed the Authorization header
+        // for itself — only one credential fits on it.
+        if !self.config.authorization_taken_by_proxy() {
+            if let Some(key) = self.config.api_key.as_deref().filter(|k| !k.is_empty()) {
+                builder = builder.bearer_auth(key);
+            }
         }
+
+        for (name, value) in &self.config.headers {
+            builder = builder.header(name, value);
+        }
+
+        if let Some(cookie) = self.config.cookie.as_deref().filter(|c| !c.is_empty()) {
+            builder = builder.header(reqwest::header::COOKIE, cookie);
+        }
+
         builder
     }
 
@@ -101,7 +185,20 @@ impl FluxClient {
     ) -> Result<T> {
         let response = builder.send().await?;
         let status = response.status();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         let body = response.text().await?;
+
+        // A proxy that answers instead of Flux is the common failure on a
+        // published server, and its 200-with-a-login-page looks nothing like an
+        // API error. Name it before trying to parse JSON out of HTML.
+        if let Some(message) = detect_proxy_challenge(status.as_u16(), &content_type, &body) {
+            return Err(FluxError::ProxyChallenge(message));
+        }
 
         if !status.is_success() {
             // Flux errors are `{ "error": "..." }`; fall back to the raw body.
@@ -239,5 +336,156 @@ impl FluxClient {
             .json(&payload),
         )
         .await
+    }
+}
+
+/// Decide whether a response came from an identity proxy rather than Flux.
+///
+/// Two shapes matter. A proxy may reject outright (401/403 with an HTML body),
+/// or it may redirect to its identity provider — which the HTTP client follows,
+/// leaving us holding a sign-in page with a `200`. Both would otherwise surface
+/// as an unintelligible JSON parse error.
+pub(crate) fn detect_proxy_challenge(
+    status: u16,
+    content_type: &str,
+    body: &str,
+) -> Option<String> {
+    let looks_like_html = content_type.contains("text/html") || {
+        let start = body.trim_start().to_ascii_lowercase();
+        start.starts_with("<!doctype html") || start.starts_with("<html")
+    };
+
+    if !looks_like_html {
+        return None;
+    }
+
+    let haystack = body.to_ascii_lowercase();
+    let provider = if haystack.contains("cloudflare access") || haystack.contains("cf-access") {
+        Some("Cloudflare Access")
+    } else if haystack.contains("oauth2-proxy") {
+        Some("oauth2-proxy")
+    } else if haystack.contains("authelia") {
+        Some("Authelia")
+    } else if haystack.contains("pomerium") {
+        Some("Pomerium")
+    } else {
+        None
+    };
+
+    let who = provider.unwrap_or("The proxy in front of Flux");
+    Some(format!(
+        "{who} answered with a sign-in page instead of Flux (HTTP {status}). Accelerate is not \
+authenticated with it. Sign in under Settings → Access, or add a service token."
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with_headers(pairs: &[(&str, &str)]) -> FluxConfig {
+        FluxConfig {
+            headers: pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..FluxConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_cloudflare_service_token_does_not_claim_authorization() {
+        let config = config_with_headers(&[
+            ("CF-Access-Client-Id", "abc.access"),
+            ("CF-Access-Client-Secret", "shh"),
+        ]);
+        // Flux's own key is still free to travel on Authorization.
+        assert!(!config.authorization_taken_by_proxy());
+    }
+
+    #[test]
+    fn a_proxy_bearer_token_claims_authorization_whatever_its_casing() {
+        assert!(
+            config_with_headers(&[("Authorization", "Bearer jwt")]).authorization_taken_by_proxy()
+        );
+        assert!(
+            config_with_headers(&[("authorization", "Bearer jwt")]).authorization_taken_by_proxy()
+        );
+        assert!(config_with_headers(&[("AUTHORIZATION", "Basic x")]).authorization_taken_by_proxy());
+    }
+
+    #[test]
+    fn clashing_credentials_are_flagged_before_the_user_hits_a_401() {
+        let mut config = config_with_headers(&[("Authorization", "Bearer jwt")]);
+        config.api_key = Some("flx_key".into());
+
+        let warnings = config.access_warnings();
+        assert!(
+            warnings.iter().any(|w| w.contains("FLUX_ALLOW_ANONYMOUS")),
+            "expected advice about the clash, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn no_clash_means_no_warning() {
+        let mut config = config_with_headers(&[("CF-Access-Client-Id", "abc")]);
+        config.api_key = Some("flx_key".into());
+        config.base_url = "https://flux.example.com".into();
+        assert!(config.access_warnings().is_empty());
+    }
+
+    #[test]
+    fn sending_proxy_credentials_over_plain_http_is_called_out() {
+        let mut config = config_with_headers(&[("CF-Access-Client-Id", "abc")]);
+        config.base_url = "http://flux.example.com".into();
+        assert!(config.access_warnings().iter().any(|w| w.contains("HTTPS")));
+    }
+
+    #[test]
+    fn a_local_server_is_not_nagged_about_https() {
+        let mut config = config_with_headers(&[("X-Token", "abc")]);
+        config.base_url = "http://localhost:3000".into();
+        assert!(config.access_warnings().is_empty());
+    }
+
+    #[test]
+    fn a_login_page_returned_as_success_is_recognised() {
+        let message = detect_proxy_challenge(
+            200,
+            "text/html; charset=utf-8",
+            "<!DOCTYPE html><html><body>Sign in to continue</body></html>",
+        );
+        assert!(message.is_some());
+        assert!(message.unwrap().contains("sign-in page"));
+    }
+
+    #[test]
+    fn known_providers_are_named_so_the_user_knows_what_to_configure() {
+        let cloudflare = detect_proxy_challenge(
+            403,
+            "text/html",
+            "<html><body>Cloudflare Access denied</body></html>",
+        )
+        .unwrap();
+        assert!(cloudflare.contains("Cloudflare Access"));
+
+        let authelia =
+            detect_proxy_challenge(401, "text/html", "<html>authelia portal</html>").unwrap();
+        assert!(authelia.contains("Authelia"));
+    }
+
+    #[test]
+    fn html_is_detected_even_without_a_content_type() {
+        assert!(detect_proxy_challenge(200, "", "  <html><head></head></html>").is_some());
+    }
+
+    #[test]
+    fn a_genuine_flux_response_is_left_alone() {
+        assert!(detect_proxy_challenge(200, "application/json", r#"{"projects":[]}"#).is_none());
+        // Flux's own 401 is an API error, not a proxy challenge.
+        assert!(
+            detect_proxy_challenge(401, "application/json", r#"{"error":"Unauthorized"}"#)
+                .is_none()
+        );
     }
 }

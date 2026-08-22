@@ -204,7 +204,12 @@ const TASKS: Task[] = [
 ];
 
 const DEFAULT_SETTINGS: Settings = {
-  flux: { base_url: "http://localhost:3000", api_key: "flx_demo_key" },
+  flux: {
+    base_url: "https://flux.example.com",
+    api_key: "flx_demo_key",
+    headers: { "CF-Access-Client-Id": "demo.access" },
+    cookie: null,
+  },
   profiles: [
     {
       id: "claude-code",

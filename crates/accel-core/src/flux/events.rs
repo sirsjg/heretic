@@ -117,17 +117,56 @@ async fn stream_once(
     shutdown: &tokio_util_shim::Flag,
 ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut url = format!("{}/api/events", config.normalised_base());
-    if let Some(key) = config.api_key.as_deref().filter(|k| !k.is_empty()) {
-        url.push_str(&format!("?token={}", urlencode(key)));
+    let key = config.api_key.as_deref().filter(|k| !k.is_empty());
+    let proxy_owns_authorization = config.authorization_taken_by_proxy();
+
+    // Prefer the Authorization header so the key stays out of URLs and proxy
+    // access logs. Fall back to Flux's documented `?token=` only when the proxy
+    // has claimed that header for its own credential.
+    if proxy_owns_authorization {
+        if let Some(key) = key {
+            url.push_str(&format!("?token={}", urlencode(key)));
+        }
     }
 
-    // No overall timeout: this request is meant to stay open indefinitely.
+    // No overall timeout: this request is meant to stay open indefinitely, and
+    // a zero Duration means "time out immediately", not "never". The connect
+    // timeout still applies, so an unreachable server fails promptly.
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(0))
+        .connect_timeout(Duration::from_secs(15))
         .build()?;
-    let response = client.get(&url).send().await?;
+
+    let mut request = client.get(&url);
+    if !proxy_owns_authorization {
+        if let Some(key) = key {
+            request = request.bearer_auth(key);
+        }
+    }
+    for (name, value) in &config.headers {
+        request = request.header(name, value);
+    }
+    if let Some(cookie) = config.cookie.as_deref().filter(|c| !c.is_empty()) {
+        request = request.header(reqwest::header::COOKIE, cookie);
+    }
+
+    let response = request.send().await?;
     if !response.status().is_success() {
         return Err(format!("event stream rejected with status {}", response.status()).into());
+    }
+
+    // A proxy sign-in page returns 200 with HTML, which would otherwise sit here
+    // looking like an event stream that never produces an event.
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if content_type.contains("text/html") {
+        return Err(
+            "the event stream returned a sign-in page — Accelerate is not authenticated with the \
+proxy in front of Flux"
+                .into(),
+        );
     }
 
     let mut stream = response.bytes_stream();
@@ -231,5 +270,201 @@ pub(crate) mod tokio_util_shim {
         pub fn is_set(&self) -> bool {
             self.0.load(Ordering::SeqCst)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    /// A minimal server that speaks just enough HTTP to hand back an SSE stream,
+    /// so the watcher can be exercised without a Flux server.
+    ///
+    /// Returns its base URL and the raw request line + headers it received.
+    async fn sse_server(
+        body: &'static str,
+        content_type: &'static str,
+    ) -> (String, tokio::sync::oneshot::Receiver<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+
+            // Read the request head so the test can assert on the headers sent.
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 1024];
+            loop {
+                match tokio::io::AsyncReadExt::read(&mut socket, &mut buffer).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        request.extend_from_slice(&buffer[..n]);
+                        if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = tx.send(String::from_utf8_lossy(&request).to_string());
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nConnection: keep-alive\r\n\r\n{body}"
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+            let _ = socket.flush().await;
+            // Hold the connection open so the watcher does not immediately retry.
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        (format!("http://127.0.0.1:{port}"), rx)
+    }
+
+    async fn first_event(config: FluxConfig) -> FluxEvent {
+        let watcher = FluxWatcher::start(config);
+        let mut events = watcher.subscribe();
+        tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .expect("the watcher produced no event")
+            .expect("stream closed")
+    }
+
+    /// Regression guard: the stream must stay open. Setting reqwest's overall
+    /// timeout to zero means "time out immediately", not "never", which silently
+    /// disabled live updates.
+    #[tokio::test]
+    async fn a_long_lived_stream_is_not_cut_off_by_a_timeout() {
+        let (url, _requests) =
+            sse_server("event: connected\ndata: \"ok\"\n\n", "text/event-stream").await;
+
+        let event = first_event(FluxConfig {
+            base_url: url,
+            ..FluxConfig::default()
+        })
+        .await;
+
+        assert!(
+            matches!(event, FluxEvent::Connected),
+            "expected Connected, got {event:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn board_changes_are_parsed_off_the_wire() {
+        let (url, _requests) = sse_server(
+            "event: change\ndata: {\"event\":\"task.status_changed\",\"project_id\":\"p1\",\"status\":\"done\"}\n\n",
+            "text/event-stream",
+        )
+        .await;
+
+        let event = first_event(FluxConfig {
+            base_url: url,
+            ..FluxConfig::default()
+        })
+        .await;
+
+        match event {
+            FluxEvent::Changed(change) => {
+                assert_eq!(change.event, "task.status_changed");
+                assert_eq!(change.project_id.as_deref(), Some("p1"));
+            }
+            other => panic!("expected a change event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_credentials_are_sent_on_the_event_stream_too() {
+        let (url, requests) =
+            sse_server("event: connected\ndata: \"ok\"\n\n", "text/event-stream").await;
+
+        let config = FluxConfig {
+            base_url: url,
+            api_key: Some("flx_key".into()),
+            headers: std::collections::BTreeMap::from([(
+                "CF-Access-Client-Id".to_string(),
+                "abc.access".to_string(),
+            )]),
+            cookie: Some("session=abc".into()),
+        };
+        let _ = first_event(config).await;
+
+        // Header names go out lower-cased, which is what HTTP/1.1 treats as
+        // equivalent and what HTTP/2 requires.
+        let request = requests.await.unwrap().to_ascii_lowercase();
+        assert!(
+            request.contains("cf-access-client-id: abc.access"),
+            "{request}"
+        );
+        assert!(request.contains("cookie: session=abc"), "{request}");
+        // The proxy left Authorization alone, so Flux's key rides on the header
+        // rather than being exposed in the query string.
+        assert!(
+            request.contains("authorization: bearer flx_key"),
+            "{request}"
+        );
+        assert!(
+            !request.contains("token=flx_key"),
+            "key should not be in the URL: {request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn when_the_proxy_owns_authorization_the_flux_key_moves_to_the_query() {
+        let (url, requests) =
+            sse_server("event: connected\ndata: \"ok\"\n\n", "text/event-stream").await;
+
+        let config = FluxConfig {
+            base_url: url,
+            api_key: Some("flx_key".into()),
+            headers: std::collections::BTreeMap::from([(
+                "Authorization".to_string(),
+                "Bearer proxy-jwt".to_string(),
+            )]),
+            cookie: None,
+        };
+        let _ = first_event(config).await;
+
+        let request = requests.await.unwrap().to_ascii_lowercase();
+        assert!(request.contains("token=flx_key"), "{request}");
+        assert!(request.contains("bearer proxy-jwt"), "{request}");
+        // Flux's key must not also ride on the header the proxy has claimed.
+        assert!(!request.contains("bearer flx_key"), "{request}");
+    }
+
+    #[tokio::test]
+    async fn a_sign_in_page_on_the_event_stream_is_reported_not_awaited() {
+        let (url, _requests) = sse_server("<!DOCTYPE html><html>login</html>", "text/html").await;
+
+        let event = first_event(FluxConfig {
+            base_url: url,
+            ..FluxConfig::default()
+        })
+        .await;
+
+        match event {
+            FluxEvent::Disconnected { error, .. } => {
+                assert!(error.contains("sign-in page"), "{error}");
+            }
+            other => panic!("expected a disconnect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn frames_are_parsed_from_the_wire_format() {
+        assert!(matches!(
+            parse_frame("event: connected\ndata: \"ok\""),
+            Some(FluxEvent::Connected)
+        ));
+        assert!(matches!(
+            parse_frame("event: data-changed\ndata: {\"ts\":1}"),
+            Some(FluxEvent::Invalidated)
+        ));
+        // Keep-alive comments and unknown events carry nothing.
+        assert!(parse_frame(": keep-alive").is_none());
+        assert!(parse_frame("event: something-else\ndata: {}").is_none());
     }
 }

@@ -608,15 +608,28 @@ impl Engine {
                 continue;
             }
 
-            let (Ok(epics), Ok(tasks)) = (
-                client.list_epics(&binding.project_id).await,
-                client.list_tasks(&binding.project_id).await,
-            ) else {
-                self.emit(EngineEvent::Notice {
-                    level: "warn".into(),
-                    message: format!("Could not read the board for {}", binding.project_id),
-                });
-                continue;
+            let epics = match client.list_epics(&binding.project_id).await {
+                Ok(epics) => epics,
+                Err(error) => {
+                    // Say why. "Could not read the board" on its own leaves the
+                    // user guessing between a proxy challenge, a bad key and a
+                    // server that is simply down.
+                    self.emit(EngineEvent::Notice {
+                        level: "warn".into(),
+                        message: format!("Could not read the board: {error}"),
+                    });
+                    continue;
+                }
+            };
+            let tasks = match client.list_tasks(&binding.project_id).await {
+                Ok(tasks) => tasks,
+                Err(error) => {
+                    self.emit(EngineEvent::Notice {
+                        level: "warn".into(),
+                        message: format!("Could not read the board: {error}"),
+                    });
+                    continue;
+                }
             };
 
             let board = BoardSnapshot {

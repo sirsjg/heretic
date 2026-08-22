@@ -13,10 +13,18 @@ import {
   Toggle,
 } from "../components/ui";
 import { IconFolder } from "../components/icons";
+import { AccessPanel } from "./AccessPanel";
 
 export function SettingsView() {
-  const { settings, saveSettings, saveBinding, connection, testConnection, board } =
-    useStore();
+  const {
+    settings,
+    saveSettings,
+    saveBinding,
+    connection,
+    board,
+    notify,
+    reconnect,
+  } = useStore();
   const binding = useStore(currentBinding);
   const [draft, setDraft] = useState<Settings | null>(settings);
 
@@ -84,11 +92,14 @@ export function SettingsView() {
                 <Button
                   variant="primary"
                   disabled={!dirty}
-                  onClick={() => void saveSettings(draft)}
+                  onClick={async () => {
+                    await saveSettings(draft);
+                    await reconnect();
+                  }}
                 >
                   Save and reconnect
                 </Button>
-                <Button onClick={() => void testConnection()}>Test connection</Button>
+                <Button onClick={() => void reconnect()}>Test connection</Button>
                 {connection.error && (
                   <span className="text-[11.5px]" style={{ color: "var(--danger)" }}>
                     {connection.error}
@@ -97,6 +108,18 @@ export function SettingsView() {
               </div>
             </div>
           </Panel>
+
+          <AccessPanel
+            flux={draft.flux}
+            connection={connection}
+            onChange={(flux) => {
+              const next = { ...draft, flux };
+              setDraft(next);
+              void saveSettings(next);
+            }}
+            onRecheck={() => void reconnect()}
+            onNotify={notify}
+          />
 
           {binding && board ? (
             <Panel

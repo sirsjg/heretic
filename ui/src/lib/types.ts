@@ -139,6 +139,10 @@ export interface ProjectBinding {
 export interface FluxConfig {
   base_url: string;
   api_key?: string | null;
+  /** Extra headers for the identity proxy in front of Flux. */
+  headers: Record<string, string>;
+  /** Session cookie from signing in, as it would appear in a Cookie header. */
+  cookie?: string | null;
 }
 
 export interface Settings {
@@ -227,7 +231,15 @@ export interface ConnectionState {
   connected: boolean;
   /** Populated when the server rejected us or could not be reached. */
   error?: string | null;
+  /** Which layer failed, so the interface can point at the right fix. */
+  kind?: "ok" | "flux_auth" | "proxy_challenge" | "unreachable";
+  /** Configuration that will bite later, even when the connection works. */
+  warnings?: string[];
 }
+
+/** Header names Cloudflare Access expects for a service token. */
+export const CF_ACCESS_ID = "CF-Access-Client-Id";
+export const CF_ACCESS_SECRET = "CF-Access-Client-Secret";
 
 export const STAGE_ORDER: RunStage[] = [
   "preparing",

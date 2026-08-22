@@ -86,6 +86,20 @@ export const api = {
     await revealItemInDir(path);
   },
 
+  /**
+   * Open a window at the Flux server so the user can complete their identity
+   * provider's flow; the resulting session cookie is kept.
+   */
+  async signIn(): Promise<string> {
+    if (!isDesktop()) return "Sign-in needs the desktop app.";
+    return invoke("flux_sign_in");
+  },
+
+  async signOut(): Promise<void> {
+    if (!isDesktop()) return;
+    return invoke("flux_sign_out");
+  },
+
   async listRuns(): Promise<RunRecord[]> {
     return isDesktop() ? invoke("list_runs") : mock.listRuns();
   },

@@ -1,4 +1,5 @@
 import { useStore } from "../lib/store";
+import type { ConnectionState } from "../lib/types";
 import { Badge, Dot, cx } from "./ui";
 import {
   IconBoard,
@@ -165,17 +166,24 @@ function ConnectionPill({
   connection,
   url,
 }: {
-  connection: { connected: boolean; error?: string | null };
+  connection: ConnectionState;
   url?: string;
 }) {
   const host = url?.replace(/^https?:\/\//, "") ?? "not configured";
+  // Naming the layer matters: a proxy challenge is fixed under Access, an
+  // unreachable server is not.
+  const label = connection.connected
+    ? "Flux connected"
+    : connection.kind === "proxy_challenge"
+      ? "Blocked by the proxy"
+      : connection.kind === "flux_auth"
+        ? "Flux rejected the key"
+        : "Flux unreachable";
   return (
     <div className="mx-2 mb-1 flex items-center gap-2 rounded-lg px-2 py-1.5" style={{ background: "var(--surface-2)" }}>
       <Dot tone={connection.connected ? "success" : "danger"} pulse={connection.connected} />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[11.5px] font-medium leading-tight">
-          {connection.connected ? "Flux connected" : "Flux unreachable"}
-        </p>
+        <p className="truncate text-[11.5px] font-medium leading-tight">{label}</p>
         <p className="truncate text-[10.5px] leading-tight text-[var(--text-faint)]" title={connection.error ?? host}>
           {connection.error ?? host}
         </p>

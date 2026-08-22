@@ -47,6 +47,8 @@ interface State {
   saveSettings: (settings: Settings) => Promise<void>;
   saveBinding: (binding: ProjectBinding) => Promise<void>;
   testConnection: () => Promise<void>;
+  /** Re-read everything after the connection changes (sign-in, new key, new URL). */
+  reconnect: () => Promise<void>;
   toggleTheme: () => void;
   notify: (level: "info" | "error", message: string) => void;
   dismissToast: (id: number) => void;
@@ -215,6 +217,33 @@ export const useStore = create<State>((set, get) => ({
     } catch (error) {
       get().notify("error", describe(error));
     }
+  },
+
+  async reconnect() {
+    // Settings may have been changed by the Rust side (signing in stores a
+    // cookie), and a project list fetched while blocked is empty — so both have
+    // to be re-read, not just the connection status.
+    const settings = await api.getSettings().catch(() => get().settings);
+    if (settings) set({ settings });
+
+    await get().testConnection();
+
+    const projects = await api.listProjects().catch(() => [] as Project[]);
+    set({ projects });
+
+    const current = get().selectedProjectId;
+    const stillThere = projects.some((project) => project.id === current);
+    if (stillThere) {
+      await get().refreshBoard();
+      return;
+    }
+
+    const bound = projects.find((project) =>
+      (settings?.bindings ?? []).some((b) => b.project_id === project.id),
+    );
+    const opening = bound?.id ?? projects[0]?.id ?? null;
+    if (opening) await get().selectProject(opening);
+    else set({ selectedProjectId: null, board: null });
   },
 
   async testConnection() {
