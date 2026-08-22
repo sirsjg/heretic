@@ -250,16 +250,16 @@ impl Engine {
         }
     }
 
-    /// Discard a finished run from the list.
+    /// Discard a finished run from the list. Active runs are kept — stop them first.
     pub async fn dismiss_run(&self, run_id: &str) -> bool {
-        let removed = self
-            .runs
-            .write()
-            .await
-            .get(run_id)
-            .is_some_and(|run| !run.is_active());
+        let removed = {
+            let mut runs = self.runs.write().await;
+            match runs.get(run_id) {
+                Some(run) if !run.is_active() => runs.remove(run_id).is_some(),
+                _ => false,
+            }
+        };
         if removed {
-            self.runs.write().await.remove(run_id);
             self.cancels.write().await.remove(run_id);
         }
         removed
@@ -652,14 +652,15 @@ impl Engine {
         started
     }
 
-    /// Poll for auto-enabled work on an interval. Runs until the process exits.
-    pub fn spawn_auto_loop(self: &Arc<Self>, interval: Duration) {
-        let engine = Arc::clone(self);
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(interval).await;
-                engine.tick_auto().await;
-            }
-        });
+    /// Poll for auto-enabled work on an interval, forever.
+    ///
+    /// Returns the loop as a future rather than spawning it, so the caller
+    /// decides which runtime owns it — a desktop shell's setup hook does not
+    /// necessarily run inside one.
+    pub async fn auto_loop(self: Arc<Self>, interval: Duration) {
+        loop {
+            tokio::time::sleep(interval).await;
+            self.tick_auto().await;
+        }
     }
 }

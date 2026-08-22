@@ -64,6 +64,8 @@ pub struct FluxWatcher {
 
 impl FluxWatcher {
     /// Start watching. The task stops when the returned `FluxWatcher` is dropped.
+    ///
+    /// Must be called from inside a Tokio runtime — it spawns the reader task.
     pub fn start(config: FluxConfig) -> Self {
         let (tx, _) = broadcast::channel(256);
         let shutdown = tokio_util_shim::Flag::new();

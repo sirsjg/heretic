@@ -94,8 +94,13 @@ export const useStore = create<State>((set, get) => ({
 
       set({ settings, projects, runs, connection, ready: true });
 
-      const first = projects[0]?.id ?? null;
-      if (first) await get().selectProject(first);
+      // Prefer a project that is actually set up, so the app opens on
+      // something workable rather than the first one alphabetically.
+      const bound = projects.find((project) =>
+        settings.bindings.some((binding) => binding.project_id === project.id),
+      );
+      const opening = bound?.id ?? projects[0]?.id ?? null;
+      if (opening) await get().selectProject(opening);
     } catch (error) {
       set({ ready: true });
       get().notify("error", describe(error));

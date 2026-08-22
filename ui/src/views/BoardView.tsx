@@ -417,7 +417,9 @@ function TaskList({
                   </Badge>
                 )}
 
-                {!runnable && !task.blocked_reason && (
+                {/* Finished work needs no explanation — the strikethrough
+                    already says it. */}
+                {!runnable && !task.blocked_reason && task.status !== "done" && (
                   <span className="text-[11px] text-[var(--text-faint)]">
                     {ineligible}
                   </span>
@@ -429,7 +431,11 @@ function TaskList({
               size="sm"
               variant={runnable ? "secondary" : "ghost"}
               icon={<IconPlay className="size-3" />}
-              disabled={!hasBinding || task.status === "in_progress"}
+              disabled={
+                !hasBinding ||
+                task.status === "in_progress" ||
+                task.status === "done"
+              }
               onClick={() => onRun(task.id)}
               className={cx(!runnable && "opacity-0 group-hover:opacity-100")}
               title={
