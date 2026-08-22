@@ -33,9 +33,9 @@ function runnerDescription(profile: ModelProfile): string {
     case "codex":
       return `codex${profile.model ? ` · ${profile.model}` : ""}`;
     case "codex_oss":
-      return `codex --oss · ${profile.model ?? "default"} · ${
-        profile.runner.base_url ?? "localhost:11434"
-      }`;
+      return profile.runner.base_url
+        ? `codex · ${profile.model ?? "default"} · ${profile.runner.base_url}`
+        : `codex --oss · ${profile.model ?? "default"} · Ollama on this machine`;
     case "custom":
       return [profile.runner.command, ...profile.runner.args].join(" ");
   }
@@ -146,6 +146,16 @@ export function ModelsView() {
                         {runnerDescription(profile)}
                       </p>
                     </div>
+
+                    {profile.runner.kind === "codex_oss" &&
+                      !profile.runner.base_url && (
+                        <Badge
+                          tone="warn"
+                          title="No host address, so this runs against Ollama on this machine rather than a server. Re-add the model from the scan to bind it to a host."
+                        >
+                          No host
+                        </Badge>
+                      )}
 
                     {!profile.autonomous && (
                       <Badge tone="warn" title="This model stops to ask for permission, so it cannot run unattended">
