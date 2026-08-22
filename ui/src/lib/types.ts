@@ -255,6 +255,9 @@ export interface RunFeedItem {
   event: AgentEvent;
 }
 
+/** Where a run's work ended up. */
+export type Landing = "nothing" | "on_branch" | "merged" | "discarded";
+
 export type RunResult =
   | { kind: "completed" }
   | { kind: "failed"; stage: RunStage; reason: string }
@@ -282,7 +285,11 @@ export interface RunRecord {
   finished_at?: string | null;
   revisions: number;
   branch?: string | null;
+  /** The branch the work forked from, and would merge back into. */
+  base_branch?: string | null;
   worktree_path?: string | null;
+  /** What has become of the work since the agents finished. */
+  landing: Landing;
   changes: ChangeSummary;
   result?: RunResult | null;
   feed: RunFeedItem[];

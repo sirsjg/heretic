@@ -47,7 +47,15 @@ const TIMELINE: RunStage[] = [
 ];
 
 export function RunView() {
-  const { runs, selectedRunId, openRun, stopRun, dismissRun } = useStore();
+  const {
+    runs,
+    selectedRunId,
+    openRun,
+    stopRun,
+    dismissRun,
+    integrateRun,
+    discardRunWork,
+  } = useStore();
   const run = runs.find((r) => r.id === selectedRunId) ?? runs[0];
 
   if (!run) {
@@ -70,7 +78,11 @@ export function RunView() {
           onDismiss={() => void dismissRun(run.id)}
         />
         <StageTimeline run={run} />
-        <Feed run={run} />
+        <Feed
+          run={run}
+          onIntegrate={() => void integrateRun(run.id)}
+          onDiscard={() => void discardRunWork(run.id)}
+        />
       </div>
 
       {runs.length > 1 && (
@@ -148,7 +160,17 @@ function RunHeader({
             Stop
           </Button>
         ) : (
-          <Button size="sm" variant="ghost" icon={<IconClose className="size-3.5" />} onClick={onDismiss}>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<IconClose className="size-3.5" />}
+            onClick={onDismiss}
+            title={
+              run.landing === "on_branch"
+                ? `Removes this run from the list. ${run.branch} and its worktree stay on disk.`
+                : "Remove this run from the list"
+            }
+          >
             Dismiss
           </Button>
         )}
@@ -184,6 +206,12 @@ function RunHeader({
           <IconClock className="size-3.5" />
           {formatDuration(run)}
         </span>
+
+        {run.landing === "on_branch" && (
+          <Badge tone="warn" title="Committed to its branch, but not merged">
+            Not merged
+          </Badge>
+        )}
 
         {run.revisions > 0 && (
           <Badge tone="warn" title="Times the reviewer sent the work back">
@@ -268,7 +296,15 @@ function StageTimeline({ run }: { run: RunRecord }) {
   );
 }
 
-function Feed({ run }: { run: RunRecord }) {
+function Feed({
+  run,
+  onIntegrate,
+  onDiscard,
+}: {
+  run: RunRecord;
+  onIntegrate: () => void;
+  onDiscard: () => void;
+}) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -314,7 +350,7 @@ function Feed({ run }: { run: RunRecord }) {
           />
         ))}
         {run.status !== "running" && run.status !== "queued" && (
-          <Outcome run={run} />
+          <Outcome run={run} onIntegrate={onIntegrate} onDiscard={onDiscard} />
         )}
         <div ref={endRef} />
       </div>
@@ -323,7 +359,15 @@ function Feed({ run }: { run: RunRecord }) {
 }
 
 /** What the run left behind, shown once it has finished. */
-function Outcome({ run }: { run: RunRecord }) {
+function Outcome({
+  run,
+  onIntegrate,
+  onDiscard,
+}: {
+  run: RunRecord;
+  onIntegrate: () => void;
+  onDiscard: () => void;
+}) {
   const files = run.changes.files;
 
   return (
@@ -364,13 +408,39 @@ function Outcome({ run }: { run: RunRecord }) {
         </ul>
       )}
 
-      {run.branch && run.status === "succeeded" && (
+      {run.landing === "on_branch" && run.branch && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t pt-2">
+          <p className="min-w-0 flex-1 text-[11.5px] leading-snug text-[var(--text-muted)]">
+            Committed to{" "}
+            <span className="font-mono" style={{ color: "var(--accent-text)" }}>
+              {run.branch}
+            </span>
+            , in its own worktree. Nothing is on{" "}
+            <span className="font-mono">{run.base_branch ?? "the base branch"}</span>{" "}
+            until you merge it.
+          </p>
+          <Button size="sm" variant="primary" onClick={onIntegrate}>
+            Merge into {run.base_branch ?? "base"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onDiscard}>
+            Discard
+          </Button>
+        </div>
+      )}
+
+      {run.landing === "merged" && (
         <p className="mt-2 text-[11.5px] text-[var(--text-muted)]">
-          Committed to{" "}
-          <span className="font-mono" style={{ color: "var(--accent-text)" }}>
-            {run.branch}
+          Merged into{" "}
+          <span className="font-mono" style={{ color: "var(--success)" }}>
+            {run.base_branch ?? "the base branch"}
           </span>
-          .
+          , and the worktree has been removed.
+        </p>
+      )}
+
+      {run.landing === "discarded" && (
+        <p className="mt-2 text-[11.5px] text-[var(--text-muted)]">
+          Discarded — branch deleted and worktree removed.
         </p>
       )}
     </div>

@@ -191,6 +191,16 @@ export const api = {
       : mock.dismissRun(runId);
   },
 
+  /** Merge a finished run's branch back, and remove its worktree. */
+  async integrateRun(runId: string): Promise<void> {
+    if (isDesktop()) return invoke("integrate_run", { runId });
+  },
+
+  /** Throw a finished run's work away. */
+  async discardRunWork(runId: string): Promise<void> {
+    if (isDesktop()) return invoke("discard_run_work", { runId });
+  },
+
   /** Start whatever auto-enabled work is ready right now. */
   async runReady(): Promise<string[]> {
     if (isDesktop()) return invoke("tick_auto");

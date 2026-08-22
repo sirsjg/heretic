@@ -44,6 +44,8 @@ interface State {
   runReady: () => Promise<void>;
   stopRun: (runId: string) => Promise<void>;
   dismissRun: (runId: string) => Promise<void>;
+  integrateRun: (runId: string) => Promise<void>;
+  discardRunWork: (runId: string) => Promise<void>;
   saveSettings: (settings: Settings) => Promise<void>;
   saveBinding: (binding: ProjectBinding) => Promise<void>;
   testConnection: () => Promise<void>;
@@ -209,6 +211,26 @@ export const useStore = create<State>((set, get) => ({
       selectedRunId: get().selectedRunId === runId ? null : get().selectedRunId,
       screen: get().selectedRunId === runId ? "board" : get().screen,
     });
+  },
+
+  async integrateRun(runId) {
+    try {
+      await api.integrateRun(runId);
+      set({ runs: await api.listRuns() });
+      get().notify("info", "Merged, and the worktree is gone.");
+    } catch (error) {
+      get().notify("error", describe(error));
+    }
+  },
+
+  async discardRunWork(runId) {
+    try {
+      await api.discardRunWork(runId);
+      set({ runs: await api.listRuns() });
+      get().notify("info", "Work discarded.");
+    } catch (error) {
+      get().notify("error", describe(error));
+    }
   },
 
   async saveSettings(settings) {

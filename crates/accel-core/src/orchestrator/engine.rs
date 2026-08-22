@@ -3,8 +3,8 @@
 
 use super::pipeline::{execute_run, RunConfig};
 use super::types::{
-    AgentExecutor, Board, BoardError, RunFeedItem, RunProgress, RunRecord, RunResult, RunStage,
-    RunStatus, Workspace,
+    AgentExecutor, Board, BoardError, Landing, RunFeedItem, RunProgress, RunRecord, RunResult,
+    RunStage, RunStatus, Workspace,
 };
 use crate::config::{Integration, Isolation, ModelProfile, ProjectBinding, Role, Settings};
 use crate::flux::{FluxClient, FluxError};
@@ -171,6 +171,9 @@ pub enum EngineError {
 
     #[error("this task is already running")]
     AlreadyRunning,
+
+    #[error("this run left nothing on a branch to land")]
+    NothingToLand,
 }
 
 /// Owns settings, the Flux connection and every run in flight.
@@ -339,7 +342,9 @@ impl Engine {
             finished_at: None,
             revisions: 0,
             branch: None,
+            base_branch: None,
             worktree_path: None,
+            landing: Landing::Nothing,
             changes: ChangeSummary::default(),
             result: None,
             feed: Vec::new(),
@@ -412,6 +417,7 @@ impl Engine {
             run.status = RunStatus::Running;
             run.stage = RunStage::Preparing;
             run.branch = workspace.branch.clone();
+            run.base_branch = Some(workspace.base_branch.clone());
             run.worktree_path = Some(workspace.path.display().to_string());
         })
         .await;
@@ -433,13 +439,23 @@ impl Engine {
 
         // Tidy up the worktree once the work has been merged; otherwise leave it
         // so the user can inspect what happened.
-        if outcome.result.succeeded() && binding.integration == Integration::Merge {
-            if let Some(branch) = workspace.branch.as_deref() {
-                let _ = branch;
-                let _ = worktree::remove_worktree(&binding.repo_path, &workspace.path).await;
-            }
+        let merged = outcome.result.succeeded()
+            && binding.integration == Integration::Merge
+            && workspace.branch.is_some();
+        if merged {
+            let _ = worktree::remove_worktree(&binding.repo_path, &workspace.path).await;
         }
 
+        let landing = if merged {
+            Landing::Merged
+        } else if workspace.branch.is_some() && !outcome.changes.is_empty() {
+            // The work is committed on its own branch and needs a decision.
+            Landing::OnBranch
+        } else {
+            Landing::Nothing
+        };
+
+        self.update(&run_id, |run| run.landing = landing).await;
         self.conclude(&run_id, outcome.result, outcome.revisions, outcome.changes)
             .await;
     }
@@ -607,6 +623,65 @@ impl Engine {
         .await;
 
         self.cancels.write().await.remove(run_id);
+    }
+
+    /// Merge a finished run's branch into the branch it came from, then remove
+    /// its worktree.
+    ///
+    /// This is what a project set to leave branches alone needs afterwards:
+    /// the work is committed but nothing has decided its fate.
+    pub async fn integrate_run(&self, run_id: &str) -> Result<(), EngineError> {
+        let (run, binding) = self.run_with_binding(run_id).await?;
+
+        let (Some(branch), Some(base)) = (run.branch.as_deref(), run.base_branch.as_deref()) else {
+            return Err(EngineError::NothingToLand);
+        };
+
+        worktree::merge_branch(&binding.repo_path, branch, base).await?;
+
+        if let Some(path) = run.worktree_path.as_deref() {
+            let _ = worktree::remove_worktree(&binding.repo_path, std::path::Path::new(path)).await;
+        }
+
+        self.update(run_id, |run| run.landing = Landing::Merged)
+            .await;
+        Ok(())
+    }
+
+    /// Throw a run's work away: remove its worktree and delete its branch.
+    pub async fn discard_run_work(&self, run_id: &str) -> Result<(), EngineError> {
+        let (run, binding) = self.run_with_binding(run_id).await?;
+        let Some(branch) = run.branch.as_deref() else {
+            return Err(EngineError::NothingToLand);
+        };
+
+        // The worktree has the branch checked out, so it has to go first.
+        if let Some(path) = run.worktree_path.as_deref() {
+            worktree::remove_worktree(&binding.repo_path, std::path::Path::new(path)).await?;
+        }
+        worktree::delete_branch(&binding.repo_path, branch).await?;
+
+        self.update(run_id, |run| run.landing = Landing::Discarded)
+            .await;
+        Ok(())
+    }
+
+    async fn run_with_binding(
+        &self,
+        run_id: &str,
+    ) -> Result<(RunRecord, ProjectBinding), EngineError> {
+        let run = self
+            .run(run_id)
+            .await
+            .ok_or_else(|| EngineError::NotBound(run_id.to_string()))?;
+        let binding = self
+            .settings
+            .read()
+            .await
+            .binding(&run.project_id)
+            .cloned()
+            .ok_or_else(|| EngineError::NotBound(run.project_id.clone()))?;
+        Ok((run, binding))
     }
 
     /// Look at every auto-enabled project and start whatever work is ready,

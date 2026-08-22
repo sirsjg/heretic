@@ -94,6 +94,8 @@ pub fn run() {
             commands::stop_run,
             commands::dismiss_run,
             commands::tick_auto,
+            commands::integrate_run,
+            commands::discard_run_work,
             commands::flux_sign_in,
             commands::flux_sign_out,
             commands::detect_environment,

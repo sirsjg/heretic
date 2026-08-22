@@ -389,6 +389,8 @@ export class MockEngine {
       started_at: new Date().toISOString(),
       revisions: 0,
       branch: `accelerate/${taskId}`,
+      base_branch: "main",
+      landing: "nothing",
       worktree_path: `~/.local/share/accelerate/worktrees/${projectId}/${taskId}`,
       changes: { files_changed: 0, insertions: 0, deletions: 0, files: [] },
       feed: [],
@@ -410,6 +412,7 @@ export class MockEngine {
       run.stage = "integrating";
       run.result = { kind: "completed" };
       run.finished_at = new Date().toISOString();
+      run.landing = "on_branch";
       run.changes = {
         files_changed: 18,
         insertions: 1240,

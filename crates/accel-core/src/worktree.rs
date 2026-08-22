@@ -301,6 +301,26 @@ pub async fn merge_branch(repo: &Path, branch: &str, base_branch: &str) -> Resul
     Ok(())
 }
 
+/// Delete a run's branch. Refuses while a worktree still has it checked out, so
+/// remove the worktree first.
+///
+/// Uses `-D`: a discarded run's branch is deliberately unmerged, and `-d` would
+/// refuse precisely when we mean it.
+pub async fn delete_branch(repo: &Path, branch: &str) -> Result<()> {
+    ensure_repository(repo).await?;
+    git(repo, &["branch", "-D", branch]).await?;
+    Ok(())
+}
+
+/// Whether a branch has already been merged into `base`.
+pub async fn is_merged(repo: &Path, branch: &str, base: &str) -> Result<bool> {
+    ensure_repository(repo).await?;
+    // merge-base --is-ancestor exits 0 when branch is contained in base.
+    Ok(git(repo, &["merge-base", "--is-ancestor", branch, base])
+        .await
+        .is_ok())
+}
+
 /// Worktrees Accelerate created that git still knows about, used to clean up
 /// after a crash.
 pub async fn list_accelerate_worktrees(repo: &Path) -> Result<Vec<PathBuf>> {
@@ -460,6 +480,76 @@ mod tests {
         std::fs::write(repo.join("README.md"), "local edits\n").unwrap();
         let result = merge_branch(&repo, &worktree.branch, "main").await;
         assert!(result.is_err());
+
+        remove_worktree(&repo, &worktree.path).await.unwrap();
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn discarded_work_removes_both_the_worktree_and_the_branch() {
+        let repo = fixture_repo("discard").await;
+        let root = repo.join("..").join("accel-worktrees-discard");
+        let worktree = create_worktree(&repo, &root, "task7", "Throwaway", None)
+            .await
+            .unwrap();
+
+        std::fs::write(worktree.path.join("scratch.txt"), "junk\n").unwrap();
+        commit_all(&worktree.path, "Some work").await.unwrap();
+
+        // The worktree holds the branch checked out, so it goes first.
+        remove_worktree(&repo, &worktree.path).await.unwrap();
+        delete_branch(&repo, &worktree.branch).await.unwrap();
+
+        let branches = git(&repo, &["branch", "--list", &worktree.branch])
+            .await
+            .unwrap();
+        assert!(branches.trim().is_empty(), "branch survived: {branches}");
+        assert!(!worktree.path.exists());
+        // The user's own work is untouched.
+        assert!(!repo.join("scratch.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn unmerged_work_can_still_be_discarded() {
+        // `git branch -d` refuses an unmerged branch, which is exactly the case
+        // discarding exists for.
+        let repo = fixture_repo("unmerged").await;
+        let root = repo.join("..").join("accel-worktrees-unmerged");
+        let worktree = create_worktree(&repo, &root, "task8", "Rejected", None)
+            .await
+            .unwrap();
+
+        std::fs::write(worktree.path.join("bad.txt"), "no\n").unwrap();
+        commit_all(&worktree.path, "Work to throw away")
+            .await
+            .unwrap();
+        assert!(!is_merged(&repo, &worktree.branch, "main").await.unwrap());
+
+        remove_worktree(&repo, &worktree.path).await.unwrap();
+        delete_branch(&repo, &worktree.branch).await.unwrap();
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn merged_work_is_recognised_as_landed() {
+        let repo = fixture_repo("landed").await;
+        let root = repo.join("..").join("accel-worktrees-landed");
+        let worktree = create_worktree(&repo, &root, "task9", "Landing", None)
+            .await
+            .unwrap();
+
+        std::fs::write(worktree.path.join("shipped.txt"), "yes\n").unwrap();
+        commit_all(&worktree.path, "Ship it").await.unwrap();
+        assert!(!is_merged(&repo, &worktree.branch, "main").await.unwrap());
+
+        merge_branch(&repo, &worktree.branch, "main").await.unwrap();
+        assert!(is_merged(&repo, &worktree.branch, "main").await.unwrap());
 
         remove_worktree(&repo, &worktree.path).await.unwrap();
         let _ = std::fs::remove_dir_all(&repo);

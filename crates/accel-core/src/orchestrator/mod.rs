@@ -8,6 +8,6 @@ pub mod engine;
 pub use engine::{Engine, EngineEvent};
 pub use pipeline::{execute_run, RunConfig};
 pub use types::{
-    AgentExecutor, Board, BoardError, RunFeedItem, RunOutcome, RunProgress, RunRecord, RunResult,
-    RunStage, RunStatus, Workspace,
+    AgentExecutor, Board, BoardError, Landing, RunFeedItem, RunOutcome, RunProgress, RunRecord,
+    RunResult, RunStage, RunStatus, Workspace,
 };

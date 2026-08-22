@@ -160,7 +160,11 @@ pub struct RunRecord {
     pub finished_at: Option<String>,
     pub revisions: u32,
     pub branch: Option<String>,
+    /// The branch the work forked from, and would merge back into.
+    pub base_branch: Option<String>,
     pub worktree_path: Option<String>,
+    /// What has become of the work since the agents finished.
+    pub landing: Landing,
     pub changes: ChangeSummary,
     pub result: Option<RunResult>,
     /// Capped activity feed — the full transcript lives on disk.
@@ -181,6 +185,23 @@ impl RunRecord {
     pub fn is_active(&self) -> bool {
         matches!(self.status, RunStatus::Queued | RunStatus::Running)
     }
+}
+
+/// Where a run's work ended up.
+///
+/// A run that finishes is not the end of the story: unless the project merges
+/// automatically, the work sits on its own branch waiting for a decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Landing {
+    /// Nothing to land — the run made no changes, or worked in place.
+    Nothing,
+    /// Committed to its branch, waiting to be merged or discarded.
+    OnBranch,
+    /// Merged into the base branch.
+    Merged,
+    /// Branch and worktree deleted.
+    Discarded,
 }
 
 #[derive(Debug, thiserror::Error)]

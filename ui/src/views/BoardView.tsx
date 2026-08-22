@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useStore, currentBinding } from "../lib/store";
-import type { Epic, Priority, TaskView } from "../lib/types";
+import type { Epic, Priority, RunRecord, TaskView } from "../lib/types";
 import { PRIORITY_LABELS } from "../lib/types";
 import { api } from "../lib/bridge";
 import { count } from "../lib/format";
@@ -34,7 +34,19 @@ export function BoardView() {
     runs,
   } = useStore();
   const binding = useStore(currentBinding);
+  const openRun = useStore((state) => state.openRun);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  // Newest run per task, so a finished task can be opened from the board
+  // instead of being hunted for under Runs.
+  const runForTask = useMemo(() => {
+    const map = new Map<string, (typeof runs)[number]>();
+    for (const run of runs) {
+      const seen = map.get(run.task_id);
+      if (!seen || run.started_at > seen.started_at) map.set(run.task_id, run);
+    }
+    return map;
+  }, [runs]);
 
   const byEpic = useMemo(() => {
     const map = new Map<string, TaskView[]>();
@@ -162,6 +174,8 @@ export function BoardView() {
               }
               onToggleAuto={(auto) => void setEpicAuto(epic.id, auto)}
               onRun={(taskId) => void startTask(taskId)}
+              runForTask={runForTask}
+              onOpenRun={openRun}
             />
           ))}
 
@@ -174,6 +188,8 @@ export function BoardView() {
                 tasks={byEpic.get("__none") ?? []}
                 hasBinding={Boolean(binding)}
                 onRun={(taskId) => void startTask(taskId)}
+                runForTask={runForTask}
+                onOpenRun={openRun}
               />
             </Panel>
           )}
@@ -263,6 +279,8 @@ function EpicSection({
   onToggleCollapse,
   onToggleAuto,
   onRun,
+  runForTask,
+  onOpenRun,
 }: {
   epic: Epic;
   tasks: TaskView[];
@@ -271,6 +289,8 @@ function EpicSection({
   onToggleCollapse: () => void;
   onToggleAuto: (auto: boolean) => void;
   onRun: (taskId: string) => void;
+  runForTask: Map<string, RunRecord>;
+  onOpenRun: (runId: string) => void;
 }) {
   const ready = tasks.filter((t) => t.ineligible === null).length;
   const done = tasks.filter((t) => t.task.status === "done").length;
@@ -325,7 +345,13 @@ function EpicSection({
       </header>
 
       {!collapsed && (
-        <TaskList tasks={tasks} hasBinding={hasBinding} onRun={onRun} />
+        <TaskList
+          tasks={tasks}
+          hasBinding={hasBinding}
+          onRun={onRun}
+          runForTask={runForTask}
+          onOpenRun={onOpenRun}
+        />
       )}
     </section>
   );
@@ -335,10 +361,14 @@ function TaskList({
   tasks,
   hasBinding,
   onRun,
+  runForTask,
+  onOpenRun,
 }: {
   tasks: TaskView[];
   hasBinding: boolean;
   onRun: (taskId: string) => void;
+  runForTask: Map<string, RunRecord>;
+  onOpenRun: (runId: string) => void;
 }) {
   if (tasks.length === 0) {
     return (
@@ -353,11 +383,17 @@ function TaskList({
       {tasks.map(({ task, ineligible }) => {
         const priority = (task.priority ?? 1) as Priority;
         const runnable = ineligible === null;
+        const run = runForTask.get(task.id);
 
         return (
           <li
             key={task.id}
-            className="group flex items-start gap-3 border-b px-4 py-2.5 last:border-b-0"
+            className={cx(
+              "group flex items-start gap-3 border-b px-4 py-2.5 last:border-b-0",
+              run && "cursor-pointer hover:bg-[var(--surface-2)]",
+            )}
+            onClick={run ? () => onOpenRun(run.id) : undefined}
+            title={run ? "Open this run" : undefined}
           >
             <span className="mt-1.5">
               <Dot
@@ -414,6 +450,29 @@ function TaskList({
                   <Badge tone="accent">{task.workers.join(", ")}</Badge>
                 )}
 
+                {run && (
+                  <Badge
+                    tone={
+                      run.landing === "on_branch"
+                        ? "warn"
+                        : run.status === "succeeded"
+                          ? "success"
+                          : "neutral"
+                    }
+                    title={
+                      run.landing === "on_branch"
+                        ? `Committed to ${run.branch}, not yet merged`
+                        : "Open this run"
+                    }
+                  >
+                    {run.landing === "on_branch"
+                      ? "Not merged"
+                      : run.landing === "merged"
+                        ? "Merged"
+                        : "View run"}
+                  </Badge>
+                )}
+
                 {task.blocked_reason && (
                   <Badge tone="danger" title={task.blocked_reason}>
                     {task.blocked_reason}
@@ -437,7 +496,10 @@ function TaskList({
                 variant={runnable ? "secondary" : "ghost"}
                 icon={<IconPlay className="size-3" />}
                 disabled={!hasBinding || task.status === "in_progress"}
-                onClick={() => onRun(task.id)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRun(task.id);
+                }}
                 className={cx(!runnable && "opacity-0 group-hover:opacity-100")}
                 title={
                   !hasBinding

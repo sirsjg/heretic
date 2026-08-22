@@ -244,6 +244,27 @@ pub async fn dismiss_run(state: State<'_, AppState>, run_id: String) -> Response
     Ok(state.engine.dismiss_run(&run_id).await)
 }
 
+/// Merge a finished run's branch into the branch it came from, then remove its
+/// worktree.
+#[tauri::command]
+pub async fn integrate_run(state: State<'_, AppState>, run_id: String) -> Response<()> {
+    state
+        .engine
+        .integrate_run(&run_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Throw a finished run's work away: worktree removed, branch deleted.
+#[tauri::command]
+pub async fn discard_run_work(state: State<'_, AppState>, run_id: String) -> Response<()> {
+    state
+        .engine
+        .discard_run_work(&run_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Start whatever auto-enabled work is ready right now.
 #[tauri::command]
 pub async fn tick_auto(state: State<'_, AppState>) -> Response<Vec<String>> {

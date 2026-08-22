@@ -48,6 +48,25 @@ a strong hosted model while the implementation grind runs on a local one.
           status + comment└──────────────────┘
 ```
 
+### What happens to the work
+
+A finished run leaves its commits on its own branch, in its own worktree. What
+happens next depends on the project's **When a run is approved** setting:
+
+- **Leave the branch for me to review** (the default) — the run finishes with
+  the work committed and nothing touched on your base branch. The run shows
+  *Not merged*, with **Merge** and **Discard** beside it. Merging brings the
+  branch in and removes the worktree; discarding deletes both.
+- **Merge it into the base branch** — the same merge happens automatically as
+  the last stage of the run.
+
+Either way the merge is refused while your main checkout has uncommitted
+changes, so a run can never overwrite work in progress.
+
+Finished tasks are clickable on the board and open their run, so reviewing what
+an agent did does not mean hunting through the Runs list. A task whose work is
+still sitting on a branch is marked *Not merged* there too.
+
 Nothing is marked done until the reviewer approves it. If a run fails, is
 stopped, or never satisfies review, the task goes back to **Todo** with a
 blocker recorded on the Flux board — which explains what happened and stops the
