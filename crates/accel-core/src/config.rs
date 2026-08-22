@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 /// The job an agent is doing in a run. Each role is bound to a model profile, so
 /// a cheap local model can implement while a stronger one reviews (or the reverse).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     /// Reads the task and writes the brief the implementer works from.
