@@ -6,6 +6,7 @@
 
 use crate::state::AppState;
 use accel_core::config::{ProjectBinding, Settings};
+use accel_core::detect::{self, CliStatus, HostProbe, ModelHost};
 use accel_core::model::{Epic, Project, Task};
 use accel_core::orchestrator::RunRecord;
 use accel_core::selection::BoardSnapshot;
@@ -336,4 +337,83 @@ fn collect_cookies(window: &tauri::WebviewWindow, url: &tauri::Url) -> Option<St
         .collect();
 
     (!pairs.is_empty()).then(|| pairs.join("; "))
+}
+
+// --- Discovering what is available to run ------------------------------------
+
+/// Everything Accelerate can find: agent CLIs on this machine, and the models
+/// each configured host is holding.
+#[derive(Serialize)]
+pub struct Environment {
+    clis: Vec<CliStatus>,
+    hosts: Vec<HostProbe>,
+    /// Which platform this is, so the interface can leave room for macOS
+    /// window controls.
+    os: &'static str,
+}
+
+/// Scan for agent CLIs and model hosts.
+///
+/// Hosts are probed concurrently: a machine that is asleep should not hold up
+/// the ones that are awake.
+#[tauri::command]
+pub async fn detect_environment(state: State<'_, AppState>) -> Response<Environment> {
+    let settings = state.engine.settings().await;
+    let (clis, hosts) = tokio::join!(detect::probe_clis(), detect::probe_hosts(&settings.hosts));
+
+    Ok(Environment {
+        clis,
+        hosts,
+        os: std::env::consts::OS,
+    })
+}
+
+/// Look at one address without saving it, so a host can be checked before it is
+/// added.
+#[tauri::command]
+pub async fn probe_host(name: String, base_url: String) -> Response<HostProbe> {
+    let host = ModelHost {
+        id: "probe".into(),
+        name,
+        base_url,
+    };
+    Ok(detect::probe_host(&host).await)
+}
+
+/// Add or update a model host.
+#[tauri::command]
+pub async fn save_host(state: State<'_, AppState>, host: ModelHost) -> Response<()> {
+    let mut settings = state.engine.settings().await;
+    // Store the address in a canonical form so `/v1` pasted by hand does not
+    // become `/v1/v1` later.
+    let host = ModelHost {
+        base_url: detect::normalise_host_base(&host.base_url),
+        ..host
+    };
+    settings.upsert_host(host);
+    state.store.save(&settings).map_err(|e| e.to_string())?;
+    state.engine.set_settings(settings).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_host(state: State<'_, AppState>, host_id: String) -> Response<()> {
+    let mut settings = state.engine.settings().await;
+    settings.remove_host(&host_id);
+    state.store.save(&settings).map_err(|e| e.to_string())?;
+    state.engine.set_settings(settings).await;
+    Ok(())
+}
+
+/// Which platform this is. Called once at startup, so the interface can leave
+/// room for the macOS window controls.
+#[tauri::command]
+pub fn platform() -> &'static str {
+    std::env::consts::OS
+}
+
+/// The OpenAI-compatible base a runner should use for a host.
+#[tauri::command]
+pub fn openai_base(base_url: String) -> String {
+    detect::openai_base(&base_url)
 }

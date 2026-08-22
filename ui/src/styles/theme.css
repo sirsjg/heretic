@@ -175,12 +175,15 @@ body {
   animation: slide-up 180ms ease-out;
 }
 
-/* Drag region for the frameless window on macOS. */
-.titlebar-drag {
-  -webkit-app-region: drag;
-}
-.titlebar-drag button,
-.titlebar-drag a,
-.titlebar-drag input {
-  -webkit-app-region: no-drag;
+/* Window dragging is handled by Tauri's data-tauri-drag-region attribute, which
+   works on every platform — `-webkit-app-region` does not.
+
+   macOS draws its close/minimise/zoom buttons over the top-left of the window,
+   which is inside our sidebar. Drop the brand row below them rather than letting
+   them sit on top of it. */
+[data-os="macos"] .titlebar-safe {
+  /* Taller, not merely padded: a fixed height with padding would squeeze the
+     brand into the controls rather than clearing them. */
+  height: 5.25rem;
+  padding-top: 28px;
 }

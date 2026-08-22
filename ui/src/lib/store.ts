@@ -86,6 +86,11 @@ export const useStore = create<State>((set, get) => ({
   async initialise() {
     applyTheme(get().theme);
 
+    // macOS puts its window controls over our sidebar, so the layout has to
+    // know which platform it is on before first paint.
+    const os = await api.platform().catch(() => "browser");
+    document.documentElement.setAttribute("data-os", os);
+
     try {
       const [settings, projects, runs, connection] = await Promise.all([
         api.getSettings(),

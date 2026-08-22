@@ -33,7 +33,10 @@ export function Sidebar() {
       style={{ background: "var(--surface)" }}
       className="flex w-60 shrink-0 flex-col border-r"
     >
-      <div className="titlebar-drag flex h-14 items-center gap-2 px-4 pt-1">
+      <div
+        data-tauri-drag-region="deep"
+        className="titlebar-safe flex h-14 items-center gap-2 px-4 pt-1"
+      >
         <div
           className="grid size-6 place-items-center rounded-md"
           style={{

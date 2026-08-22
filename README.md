@@ -101,6 +101,44 @@ pnpm tauri icon crates/accel-app/icons/icon-1024.png
    Code for planning and review, and a local Qwen through Codex for the rest.
 4. **Switch Auto on** for an epic, either here or in Flux itself.
 
+### Finding what you can run
+
+**Models & roles → What's available** scans for:
+
+- **Agent CLIs** on this machine — Claude Code and Codex, with their versions.
+  Anything missing says so, and why.
+- **Model hosts** — every configured machine is asked what weights it is
+  holding. Ollama is read through its native API, so parameter counts,
+  quantisation and sizes come through; anything OpenAI-shaped (vLLM, LM Studio,
+  llama.cpp, NIM) is read from `/v1/models`.
+
+Anything found becomes a profile in one click. Anything not found can still be
+added by hand — detection is a convenience, not a gate.
+
+### Using another machine's models
+
+Point Accelerate at any box on your network — a DGX Spark, a workstation with a
+GPU, a server in the rack. **Add a host**, give it a name and an address, and its
+models appear alongside the local ones.
+
+```
+Name:     DGX Spark
+Address:  http://spark.local:11434
+```
+
+The address is checked before it is saved, so a typo is caught there rather than
+at run time. Paste it with or without a trailing `/v1` — both work.
+
+A remote Ollama only answers other machines when it is bound beyond loopback:
+
+```bash
+# on the host serving the models
+OLLAMA_HOST=0.0.0.0 ollama serve
+```
+
+...and the port has to be open through its firewall. Hosts are probed
+concurrently, so one machine that is asleep does not hold up the rest.
+
 ### Running a local model
 
 Local models need a coding harness to actually edit files; Accelerate drives
@@ -110,8 +148,9 @@ them through Codex's open-model mode:
 ollama pull qwen3-coder:30b
 ```
 
-Then set a profile's runner to **Codex — local model (Ollama)** and its model to
-`qwen3-coder:30b`. The endpoint defaults to `http://localhost:11434/v1`.
+Adding a model from the scan sets this up for you. By hand: set a profile's
+runner to **Codex — local model (Ollama)** and its model to `qwen3-coder:30b`.
+The endpoint defaults to `http://localhost:11434/v1`.
 
 ### Custom agent CLIs
 
@@ -226,6 +265,7 @@ crates/accel-core/     the engine — no UI framework anywhere in it
   worktree.rs          git worktrees, diffs, commits, merges
   prompt.rs            the brief each role works from
   orchestrator/        the run state machine and the engine
+  detect.rs            finding agent CLIs and the models each host holds
 crates/accel-app/      the Tauri shell: commands and events, and little else
 ui/                    React + Tailwind front end
 ```

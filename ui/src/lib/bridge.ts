@@ -8,6 +8,9 @@
 
 import type {
   BoardView,
+  Environment,
+  HostProbe,
+  ModelHost,
   ConnectionState,
   EngineEvent,
   Project,
@@ -95,9 +98,77 @@ export const api = {
     return invoke("flux_sign_in");
   },
 
+  /** "macos" | "linux" | ... — used to leave room for window controls. */
+  async platform(): Promise<string> {
+    if (!isDesktop()) return "browser";
+    return invoke("platform");
+  },
+
   async signOut(): Promise<void> {
     if (!isDesktop()) return;
     return invoke("flux_sign_out");
+  },
+
+  /** Scan for agent CLIs and for the models each configured host is holding. */
+  async detectEnvironment(): Promise<Environment> {
+    if (isDesktop()) return invoke("detect_environment");
+    return {
+      clis: [
+        { program: "claude", label: "Claude Code", found: true, version: "2.0.44" },
+        {
+          program: "codex",
+          label: "Codex",
+          found: false,
+          problem: "`codex` was not found on PATH.",
+        },
+      ],
+      hosts: [
+        {
+          host: { id: "local-ollama", name: "This machine", base_url: "http://localhost:11434" },
+          reachable: true,
+          kind: "ollama",
+          models: [
+            { id: "qwen3-coder:30b", parameter_size: "30.5B", quantization: "Q4_K_M", size_bytes: 18500000000 },
+            { id: "llama3.1:8b", parameter_size: "8.0B", quantization: "Q4_0", size_bytes: 4700000000 },
+          ],
+        },
+        {
+          host: { id: "spark", name: "DGX Spark", base_url: "http://spark.local:11434" },
+          reachable: true,
+          kind: "ollama",
+          models: [
+            { id: "qwen3-coder:480b", parameter_size: "480B", quantization: "Q4_K_M", size_bytes: 270000000000 },
+            { id: "deepseek-r1:70b", parameter_size: "70B", quantization: "Q8_0", size_bytes: 74000000000 },
+          ],
+        },
+      ],
+      os: "browser",
+    };
+  },
+
+  /** Look at an address without saving it. */
+  async probeHost(name: string, baseUrl: string): Promise<HostProbe> {
+    if (isDesktop()) return invoke("probe_host", { name, baseUrl });
+    return {
+      host: { id: "probe", name, base_url: baseUrl },
+      reachable: true,
+      kind: "ollama",
+      models: [{ id: "qwen3-coder:30b", parameter_size: "30.5B" }],
+    };
+  },
+
+  async saveHost(host: ModelHost): Promise<void> {
+    if (isDesktop()) return invoke("save_host", { host });
+  },
+
+  async removeHost(hostId: string): Promise<void> {
+    if (isDesktop()) return invoke("remove_host", { hostId });
+  },
+
+  /** The OpenAI-compatible base a runner should use for a host. */
+  async openaiBase(baseUrl: string): Promise<string> {
+    if (isDesktop()) return invoke("openai_base", { baseUrl });
+    return `${baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "")}/v1`;
   },
 
   async listRuns(): Promise<RunRecord[]> {

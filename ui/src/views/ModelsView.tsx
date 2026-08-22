@@ -13,6 +13,7 @@ import {
   cx,
 } from "../components/ui";
 import { IconClose, IconModels } from "../components/icons";
+import { DetectPanel } from "./DetectPanel";
 
 const RUNNER_OPTIONS = [
   { value: "claude_code", label: "Claude Code" },
@@ -41,7 +42,7 @@ function runnerDescription(profile: ModelProfile): string {
 }
 
 export function ModelsView() {
-  const { settings, saveSettings } = useStore();
+  const { settings, saveSettings, notify } = useStore();
   const [editing, setEditing] = useState<string | null>(null);
 
   if (!settings) return null;
@@ -79,7 +80,10 @@ export function ModelsView() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="titlebar-drag flex h-14 shrink-0 items-center border-b px-5">
+      <header
+        data-tauri-drag-region="deep"
+        className="flex h-14 shrink-0 items-center border-b px-5"
+      >
         <div>
           <h1 className="text-[15px] font-semibold tracking-tight">Models & roles</h1>
           <p className="text-[11.5px] text-[var(--text-muted)]">
@@ -90,6 +94,16 @@ export function ModelsView() {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          <DetectPanel
+            profiles={settings.profiles}
+            onAddProfile={(profile) => {
+              // Replace rather than duplicate when the same model is re-added.
+              const without = settings.profiles.filter((p) => p.id !== profile.id);
+              update({ ...settings, profiles: [...without, profile] });
+            }}
+            onNotify={notify}
+          />
+
           <Panel
             title="Role assignments"
             description="A run passes through these in order. Give the grind to something cheap and local; keep judgement on your strongest model."

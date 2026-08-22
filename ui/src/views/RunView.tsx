@@ -119,7 +119,7 @@ function RunHeader({
   const active = run.status === "running" || run.status === "queued";
 
   return (
-    <header className="titlebar-drag shrink-0 border-b px-5 py-3">
+    <header data-tauri-drag-region="deep" className="shrink-0 border-b px-5 py-3">
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

@@ -248,6 +248,10 @@ const DEFAULT_SETTINGS: Settings = {
     reviewer: "claude-code",
     documenter: "qwen-local",
   },
+  hosts: [
+    { id: "local-ollama", name: "This machine", base_url: "http://localhost:11434" },
+    { id: "spark", name: "DGX Spark", base_url: "http://spark.local:11434" },
+  ],
   bindings: [
     {
       project_id: "mgdr6ar",

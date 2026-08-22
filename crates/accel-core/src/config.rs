@@ -4,6 +4,7 @@
 //! backends are available, which backend plays which role, and where each Flux
 //! project lives on disk.
 
+use crate::detect::ModelHost;
 use crate::flux::FluxConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -236,7 +237,8 @@ impl ProjectBinding {
 }
 
 /// The whole persisted configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     #[serde(default)]
     pub flux: FluxConfig,
@@ -247,6 +249,26 @@ pub struct Settings {
     pub roles: BTreeMap<Role, String>,
     #[serde(default)]
     pub bindings: Vec<ProjectBinding>,
+    /// Machines serving models — this laptop's Ollama, and any box on the
+    /// network worth scanning for weights.
+    #[serde(default = "default_hosts")]
+    pub hosts: Vec<ModelHost>,
+}
+
+fn default_hosts() -> Vec<ModelHost> {
+    vec![ModelHost::localhost()]
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            flux: FluxConfig::default(),
+            profiles: Vec::new(),
+            roles: BTreeMap::new(),
+            bindings: Vec::new(),
+            hosts: default_hosts(),
+        }
+    }
 }
 
 impl Settings {
@@ -285,7 +307,20 @@ impl Settings {
             profiles: vec![claude, qwen],
             roles,
             bindings: Vec::new(),
+            hosts: default_hosts(),
         }
+    }
+
+    /// Insert or replace a model host.
+    pub fn upsert_host(&mut self, host: ModelHost) {
+        match self.hosts.iter_mut().find(|h| h.id == host.id) {
+            Some(existing) => *existing = host,
+            None => self.hosts.push(host),
+        }
+    }
+
+    pub fn remove_host(&mut self, host_id: &str) {
+        self.hosts.retain(|host| host.id != host_id);
     }
 
     pub fn profile(&self, id: &str) -> Option<&ModelProfile> {

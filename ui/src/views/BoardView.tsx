@@ -92,7 +92,10 @@ export function BoardView() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="titlebar-drag flex h-14 shrink-0 items-center gap-3 border-b px-5">
+      <header
+        data-tauri-drag-region="deep"
+        className="flex h-14 shrink-0 items-center gap-3 border-b px-5"
+      >
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[15px] font-semibold tracking-tight">
             {board.project.name}

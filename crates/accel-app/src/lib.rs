@@ -96,6 +96,12 @@ pub fn run() {
             commands::tick_auto,
             commands::flux_sign_in,
             commands::flux_sign_out,
+            commands::detect_environment,
+            commands::probe_host,
+            commands::save_host,
+            commands::remove_host,
+            commands::openai_base,
+            commands::platform,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Accelerate");

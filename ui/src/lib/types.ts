@@ -150,6 +150,61 @@ export interface Settings {
   profiles: ModelProfile[];
   roles: Partial<Record<Role, string>>;
   bindings: ProjectBinding[];
+  hosts: ModelHost[];
+}
+
+// --- Discovery --------------------------------------------------------------
+
+/** An agent CLI Accelerate knows how to drive. */
+export interface CliStatus {
+  program: string;
+  label: string;
+  found: boolean;
+  version?: string | null;
+  problem?: string | null;
+}
+
+/** A machine serving models — this laptop, or a box on the network. */
+export interface ModelHost {
+  id: string;
+  name: string;
+  base_url: string;
+}
+
+export interface DiscoveredModel {
+  id: string;
+  parameter_size?: string | null;
+  quantization?: string | null;
+  size_bytes?: number | null;
+}
+
+export interface HostProbe {
+  host: ModelHost;
+  reachable: boolean;
+  kind?: "ollama" | "openai_compatible" | null;
+  models: DiscoveredModel[];
+  problem?: string | null;
+}
+
+export interface Environment {
+  clis: CliStatus[];
+  hosts: HostProbe[];
+  os: string;
+}
+
+/** A one-line description of a model, matching the Rust side. */
+export function describeModel(model: DiscoveredModel): string {
+  const parts: string[] = [];
+  if (model.parameter_size) parts.push(model.parameter_size);
+  if (model.quantization) parts.push(model.quantization);
+  if (typeof model.size_bytes === "number") {
+    parts.push(
+      model.size_bytes >= 1e9
+        ? `${(model.size_bytes / 1e9).toFixed(1)} GB`
+        : `${Math.round(model.size_bytes / 1e6)} MB`,
+    );
+  }
+  return parts.join(" · ");
 }
 
 // --- Runs -------------------------------------------------------------------

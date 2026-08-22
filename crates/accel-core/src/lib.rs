@@ -6,6 +6,7 @@
 //! this crate.
 
 pub mod config;
+pub mod detect;
 pub mod flux;
 pub mod model;
 pub mod orchestrator;
