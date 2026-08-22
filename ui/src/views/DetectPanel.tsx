@@ -256,6 +256,7 @@ function HostBlock({
           <p className="truncate font-mono text-[11px] text-[var(--text-muted)]">
             {probe.host.base_url}
             {probe.reachable && ` · ${probe.models.length} models`}
+            {probe.version && ` · v${probe.version}`}
           </p>
         </button>
 
@@ -270,15 +271,19 @@ function HostBlock({
         )}
       </div>
 
-      {probe.problem && (
-        <div className="flex items-start gap-2 px-3 pb-2">
-          <IconAlert
-            className="mt-0.5 size-3.5 shrink-0"
-            style={{ color: "var(--warn)" }}
-          />
-          <p className="text-[11.5px] leading-snug text-[var(--text-muted)]">
-            {probe.problem}
-          </p>
+      {(probe.problem || probe.warning) && (
+        <div className="flex flex-col gap-1.5 px-3 pb-2">
+          {[probe.warning, probe.problem].filter(Boolean).map((message) => (
+            <div key={message} className="flex items-start gap-2">
+              <IconAlert
+                className="mt-0.5 size-3.5 shrink-0"
+                style={{ color: "var(--warn)" }}
+              />
+              <p className="text-[11.5px] leading-snug text-[var(--text-muted)]">
+                {message}
+              </p>
+            </div>
+          ))}
         </div>
       )}
 

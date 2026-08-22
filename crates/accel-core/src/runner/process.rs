@@ -6,7 +6,7 @@
 //! agent in its own process group and signal the group.
 
 use super::command::AgentCommand;
-use super::stream::{parse_line, AgentEvent};
+use super::stream::{parse_line, AgentEvent, OutputFormat};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -202,9 +202,13 @@ pub async fn run_agent(
 
             line = line_rx.recv() => match line {
                 Some((is_stderr, text)) => {
-                    // stderr is never stream-json, whatever the backend is.
-                    let stream_json = command.emits_stream_json && !is_stderr;
-                    if let Some(event) = parse_line(&text, stream_json) {
+                    // stderr is never structured, whatever the backend is.
+                    let format = if is_stderr {
+                        OutputFormat::Plain
+                    } else {
+                        command.output
+                    };
+                    if let Some(event) = parse_line(&text, format) {
                         let _ = sink.send(event.clone()).await;
                         transcript.push(event);
                     }
@@ -230,8 +234,12 @@ pub async fn run_agent(
 
     // Drain anything still buffered after the process exited.
     while let Ok((is_stderr, text)) = line_rx.try_recv() {
-        let stream_json = command.emits_stream_json && !is_stderr;
-        if let Some(event) = parse_line(&text, stream_json) {
+        let format = if is_stderr {
+            OutputFormat::Plain
+        } else {
+            command.output
+        };
+        if let Some(event) = parse_line(&text, format) {
             let _ = sink.send(event.clone()).await;
             transcript.push(event);
         }
@@ -305,7 +313,7 @@ mod tests {
             args: vec!["-c".into(), script.into()],
             env: BTreeMap::new(),
             prompt_via_stdin: false,
-            emits_stream_json: false,
+            output: OutputFormat::Plain,
         }
     }
 

@@ -184,6 +184,10 @@ export interface HostProbe {
   kind?: "ollama" | "openai_compatible" | null;
   models: DiscoveredModel[];
   problem?: string | null;
+  /** Server version, when it reports one. */
+  version?: string | null;
+  /** Something that will stop a run even though the host answered. */
+  warning?: string | null;
 }
 
 export interface Environment {

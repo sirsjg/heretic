@@ -173,6 +173,41 @@ pub struct HostProbe {
     pub kind: Option<HostKind>,
     pub models: Vec<DiscoveredModel>,
     pub problem: Option<String>,
+    /// Server version, when it reports one.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Something that will stop a run even though the host answered.
+    #[serde(default)]
+    pub warning: Option<String>,
+}
+
+/// The oldest Ollama the Codex CLI will drive.
+///
+/// Below this it refuses outright with "Ollama x is too old", which otherwise
+/// only shows up when a run fails.
+pub const MINIMUM_OLLAMA: (u32, u32, u32) = (0, 13, 4);
+
+fn parse_version(version: &str) -> Option<(u32, u32, u32)> {
+    let cleaned = version.trim().trim_start_matches('v');
+    let mut parts = cleaned
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty())
+        .map(|p| p.parse::<u32>().ok());
+
+    Some((
+        parts.next()??,
+        parts.next()??,
+        parts.next().flatten().unwrap_or(0),
+    ))
+}
+
+/// Whether this Ollama is too old for Codex to use.
+pub fn ollama_too_old(version: &str) -> bool {
+    match parse_version(version) {
+        Some(found) => found < MINIMUM_OLLAMA,
+        // Unparseable means unknown, and warning on a guess would be worse.
+        None => false,
+    }
 }
 
 /// Strip a trailing `/v1` and any trailing slash, so a host can be pasted in
@@ -207,6 +242,8 @@ pub async fn probe_host(host: &ModelHost) -> HostProbe {
                 kind: None,
                 models: Vec::new(),
                 problem: Some(error.to_string()),
+                version: None,
+                warning: None,
             }
         }
     };
@@ -214,26 +251,35 @@ pub async fn probe_host(host: &ModelHost) -> HostProbe {
     if let Ok(response) = client.get(format!("{base}/api/tags")).send().await {
         if response.status().is_success() {
             if let Ok(body) = response.text().await {
-                match parse_ollama_tags(&body) {
-                    Ok(models) => {
-                        return HostProbe {
-                            host: host.clone(),
-                            reachable: true,
-                            kind: Some(HostKind::Ollama),
-                            models,
-                            problem: None,
-                        }
-                    }
-                    Err(error) => {
-                        return HostProbe {
-                            host: host.clone(),
-                            reachable: true,
-                            kind: Some(HostKind::Ollama),
-                            models: Vec::new(),
-                            problem: Some(error),
-                        }
-                    }
-                }
+                let version = ollama_version(&client, &base).await;
+                let warning = version.as_deref().filter(|v| ollama_too_old(v)).map(|v| {
+                    let (major, minor, patch) = MINIMUM_OLLAMA;
+                    format!(
+                        "Ollama {v} is too old for Codex, which needs {major}.{minor}.{patch} or \
+newer. Update it on this host, or runs using its models will fail."
+                    )
+                });
+
+                return match parse_ollama_tags(&body) {
+                    Ok(models) => HostProbe {
+                        host: host.clone(),
+                        reachable: true,
+                        kind: Some(HostKind::Ollama),
+                        models,
+                        problem: None,
+                        version,
+                        warning,
+                    },
+                    Err(error) => HostProbe {
+                        host: host.clone(),
+                        reachable: true,
+                        kind: Some(HostKind::Ollama),
+                        models: Vec::new(),
+                        problem: Some(error),
+                        version,
+                        warning,
+                    },
+                };
             }
         }
     }
@@ -248,6 +294,8 @@ pub async fn probe_host(host: &ModelHost) -> HostProbe {
                     kind: Some(HostKind::OpenAiCompatible),
                     models,
                     problem: None,
+                    version: None,
+                    warning: None,
                 },
                 Err(error) => HostProbe {
                     host: host.clone(),
@@ -255,6 +303,8 @@ pub async fn probe_host(host: &ModelHost) -> HostProbe {
                     kind: Some(HostKind::OpenAiCompatible),
                     models: Vec::new(),
                     problem: Some(error),
+                    version: None,
+                    warning: None,
                 },
             }
         }
@@ -268,6 +318,8 @@ pub async fn probe_host(host: &ModelHost) -> HostProbe {
 OpenAI-compatible server.",
                 response.status()
             )),
+            version: None,
+            warning: None,
         },
         Err(error) => HostProbe {
             host: host.clone(),
@@ -275,8 +327,27 @@ OpenAI-compatible server.",
             kind: None,
             models: Vec::new(),
             problem: Some(describe_unreachable(&base, &error)),
+            version: None,
+            warning: None,
         },
     }
+}
+
+/// Ollama's reported version, when it offers one.
+async fn ollama_version(client: &reqwest::Client, base: &str) -> Option<String> {
+    let response = client
+        .get(format!("{base}/api/version"))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let value: serde_json::Value = response.json().await.ok()?;
+    value
+        .get("version")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
 }
 
 fn describe_unreachable(base: &str, error: &reqwest::Error) -> String {
@@ -568,6 +639,46 @@ mod tests {
         assert_eq!(probe.kind, Some(HostKind::Ollama));
         assert_eq!(probe.models.len(), 1);
         assert_eq!(probe.models[0].id, "qwen3-coder:30b");
+    }
+
+    #[test]
+    fn an_ollama_too_old_for_codex_is_recognised() {
+        // Codex refuses anything below 0.13.4, which is otherwise only
+        // discovered when a run dies.
+        assert!(ollama_too_old("0.12.0"));
+        assert!(ollama_too_old("0.13.3"));
+        assert!(!ollama_too_old("0.13.4"));
+        assert!(!ollama_too_old("0.15.0"));
+        assert!(!ollama_too_old("1.0.0"));
+        assert!(!ollama_too_old("v0.14.1"));
+        // An unreadable version is not worth a false alarm.
+        assert!(!ollama_too_old("unknown"));
+    }
+
+    #[tokio::test]
+    async fn an_old_ollama_is_flagged_before_a_run_fails() {
+        let base = fake_server(vec![
+            ("/api/tags", r#"{"models":[{"name":"qwen3:8b"}]}"#),
+            ("/api/version", r#"{"version":"0.12.0"}"#),
+        ])
+        .await;
+
+        let probe = probe_host(&host_at(base)).await;
+        assert!(probe.reachable);
+        assert_eq!(probe.version.as_deref(), Some("0.12.0"));
+        assert!(probe.warning.unwrap().contains("too old"));
+    }
+
+    #[tokio::test]
+    async fn a_current_ollama_draws_no_warning() {
+        let base = fake_server(vec![
+            ("/api/tags", r#"{"models":[{"name":"qwen3:8b"}]}"#),
+            ("/api/version", r#"{"version":"0.15.0"}"#),
+        ])
+        .await;
+
+        let probe = probe_host(&host_at(base)).await;
+        assert!(probe.warning.is_none());
     }
 
     #[tokio::test]

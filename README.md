@@ -152,6 +152,30 @@ Adding a model from the scan sets this up for you. By hand: set a profile's
 runner to **Codex — local model (Ollama)** and its model to `qwen3-coder:30b`.
 The endpoint defaults to `http://localhost:11434/v1`.
 
+**Codex needs Ollama 0.13.4 or newer.** Anything older is refused outright, so
+the scan checks each host's version and says so before you hit it mid-run.
+
+Under the hand, a local model runs as:
+
+```bash
+codex exec --json --sandbox workspace-write --oss --local-provider ollama -m <model> "<brief>"
+```
+
+A model on another machine cannot use `--oss`, because Codex will not let
+configuration override its built-in provider ids. Accelerate declares one of its
+own instead:
+
+```bash
+codex exec --json --sandbox workspace-write \
+  -c model_providers.accelerate-oss.base_url="http://spark.local:11434/v1" \
+  -c model_providers.accelerate-oss.wire_api="responses" \
+  -c model_provider="accelerate-oss" \
+  -m <model> "<brief>"
+```
+
+Current Codex accepts only the `responses` wire format from a custom provider,
+which recent Ollama serves at `/v1/responses`.
+
 ### Custom agent CLIs
 
 Any command works. `{{prompt}}` is replaced with the generated brief and
