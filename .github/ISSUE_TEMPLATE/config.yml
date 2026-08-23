@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/sirsjg/heretic/security/advisories/new
+    about: Report privately — please do not open a public issue.
+  - name: Flux
+    url: https://github.com/sirsjg/flux
+    about: Issues with the board itself belong here.
+  - name: Momentum
+    url: https://github.com/sirsjg/momentum
+    about: The terminal predecessor to Heretic.

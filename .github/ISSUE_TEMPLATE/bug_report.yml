@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in Heretic does not work the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Heretic drives other agent CLIs, so the more you
+        can tell us about which agent and which model were in play, the faster
+        this gets fixed.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Bind a project to a repository
+        2. Switch Auto on for an epic
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Heretic version
+      description: From the releases page, or the commit if you built from source
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and model
+      description: Which CLI was running the role that failed, and against which model
+      placeholder: Codex --oss, qwen3-coder:30b on a remote Ollama
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Run feed or logs
+      description: Paste the relevant output. It is rendered as code, so no backticks needed.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have removed any API keys, tokens or private repository contents from the above
+          required: true

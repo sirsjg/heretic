@@ -1,13 +1,50 @@
-# Heretic
+# Heretic + Flux = 🔥
 
-A desktop companion for [Flux](https://github.com/sirsjg/flux). Point it at a
-project, switch **Auto** on for an epic, and it works the ready tasks with a team
-of AI agents — one to plan, one to implement, one to review, one to document.
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/sirsjg/heretic?display_name=tag&sort=semver)](https://github.com/sirsjg/heretic/releases)
+[![CI](https://github.com/sirsjg/heretic/actions/workflows/ci.yml/badge.svg)](https://github.com/sirsjg/heretic/actions/workflows/ci.yml)
+[![Downloads](https://img.shields.io/github/downloads/sirsjg/heretic/total)](https://github.com/sirsjg/heretic/releases)
+[![Conventional Commits](https://img.shields.io/badge/commits-conventional-fe5196?logo=conventionalcommits&logoColor=white)](https://www.conventionalcommits.org)
+![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)
+![Tauri](https://img.shields.io/badge/Tauri-24C8DB?style=flat&logo=tauri&logoColor=white)
+![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB)
+![macOS](https://img.shields.io/badge/macOS-000000?style=flat&logo=apple&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat&logo=linux&logoColor=black)
+
+> [!WARNING]
+> This tool is experimental and not ready for production use.
+
+**The perfect companion to [Flux](https://github.com/sirsjg/flux).** Point it at
+a project, switch **Auto** on for an epic, and it works the ready tasks with a
+team of AI agents — one to plan, one to implement, one to review, one to
+document.
 
 Each role is bound to a model you choose, so the expensive judgement can sit with
 a strong hosted model while the implementation grind runs on a local one.
 
-> Experimental, and built for macOS and Linux.
+<br>
+
+## Heretic replaces Momentum
+
+[Momentum](https://github.com/sirsjg/momentum) was the first companion to Flux:
+a terminal UI that watched the board and threw a single Claude Code agent at
+each ready task. It worked, and it is where these ideas were proved — but one
+agent per task means one model, one pass, and nobody checking the work.
+
+Heretic is the replacement. Same premise, different machine underneath:
+
+| | Momentum | **Heretic** |
+|---|---|---|
+| Interface | Terminal UI | Desktop app (macOS, Linux) |
+| Per task | One agent, one pass | A team — plan → implement → review → document |
+| Models | Claude Code only | Any mix: Claude Code, Codex, local models, custom CLIs |
+| Review | None | A reviewer that can send work back with notes |
+| Isolation | Shared checkout | A `git worktree` per task, on its own branch |
+| Landing the work | Committed in place | Merge or discard from the app, on your terms |
+| Local models | — | Ollama, vLLM, LM Studio, llama.cpp — local or over the network |
+
+Momentum still works and its releases stay up, but new work happens here. If you
+are starting today, start with Heretic.
 
 <br>
 
@@ -90,9 +127,91 @@ An unreadable review verdict is never treated as approval.
 
 <br>
 
-## Build and run
+## Install
+
+### Installer (macOS & Linux)
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/sirsjg/heretic/main/install.sh | sh
+```
+
+It detects your operating system and architecture, verifies the download against
+the release checksum, and then installs it — `Heretic.app` into `/Applications`
+on macOS, or the AppImage into `~/.local/bin` with a desktop entry on Linux.
+
+Set `HERETIC_VERSION` to pin a release, `HERETIC_APP_DIR` (macOS) or
+`HERETIC_INSTALL_DIR` (Linux) to install somewhere else:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sirsjg/heretic/main/install.sh | \
+  HERETIC_VERSION=0.1.0 HERETIC_APP_DIR="$HOME/Applications" sh
+```
+
+### Homebrew (macOS)
+
+```bash
+brew install --cask --no-quarantine sirsjg/heretic/heretic
+```
+
+`--no-quarantine` is needed because Heretic is not notarised — see below.
+
+### Manually
+
+Grab a bundle from the [releases page](https://github.com/sirsjg/heretic/releases):
+
+| Platform | File |
+|---|---|
+| macOS, Apple Silicon | `heretic_<version>_darwin_arm64.dmg` |
+| macOS, Intel | `heretic_<version>_darwin_amd64.dmg` |
+| Linux, x86_64 | `heretic_<version>_linux_amd64.AppImage` |
+| Debian / Ubuntu, x86_64 | `heretic_<version>_linux_amd64.deb` |
+
+```bash
+# Debian and derivatives
+sudo apt install ./heretic_0.1.0_linux_amd64.deb
+
+# AppImage anywhere else
+chmod +x heretic_0.1.0_linux_amd64.AppImage && ./heretic_0.1.0_linux_amd64.AppImage
+```
+
+Every release ships a `checksums.txt`. Verify before you run anything:
+
+```bash
+sha256sum -c checksums.txt --ignore-missing
+```
+
+Linux on ARM has no prebuilt bundle yet — build from source below.
+
+### A note on macOS Gatekeeper
+
+Heretic is **ad-hoc signed but not notarised**, because notarisation needs a
+paid Apple Developer ID. That has no effect on how the app behaves, but it does
+change how you are allowed to open it:
+
+- **The installer script is fine.** `curl` does not set the quarantine flag, and
+  the script clears it anyway.
+- **A browser download is quarantined.** macOS will refuse to open it. Clear the
+  flag once:
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/Heretic.app
+  ```
+
+- **Homebrew** applies quarantine unless you pass `--no-quarantine`.
+
+If that trade is not one you want to make, build from source — the result is
+identical.
+
+<br>
+
+## Build from source
+
+Needs [Rust](https://rustup.rs) (stable), [Node](https://nodejs.org) 20+ and
+[pnpm](https://pnpm.io).
+
+```bash
+git clone https://github.com/sirsjg/heretic
+cd heretic
 pnpm install
 pnpm app          # development, with hot reload
 pnpm app:build    # a bundled .app / .dmg / .deb / .AppImage
@@ -101,7 +220,8 @@ pnpm app:build    # a bundled .app / .dmg / .deb / .AppImage
 On Linux you also need the usual Tauri system packages:
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev build-essential curl file
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+  librsvg2-dev libssl-dev libxdo-dev patchelf build-essential curl wget file
 ```
 
 To regenerate the platform icon set (`.icns`, `.ico`) from the source artwork:
@@ -371,14 +491,40 @@ uncommitted changes.
 
 <br>
 
+## Releases
+
+Versions are [semantic](https://semver.org) and cut automatically. Every merge
+to `main` is read by
+[semantic-release](https://semantic-release.gitbook.io): a `fix:` commit becomes
+a patch, a `feat:` a minor, anything breaking a major. The version is written
+into `package.json`, `Cargo.toml` and `tauri.conf.json`, tagged, and the desktop
+bundles are built and attached to the GitHub release with a `checksums.txt`.
+
+Nothing is released by hand, so the commit message is the release note. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the prefixes, and
+[CHANGELOG.md](CHANGELOG.md) for what has shipped.
+
+<br>
+
+## Contributing
+
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md)
+for how to get set up and what CI expects. Everyone taking part is expected to
+follow the [code of conduct](CODE_OF_CONDUCT.md).
+
+Found a security problem? Please report it privately: see
+[SECURITY.md](SECURITY.md).
+
+<br>
+
 ## Related
 
 - [Flux](https://github.com/sirsjg/flux) — the board this is built on
-- [Momentum](https://github.com/sirsjg/momentum) — the terminal companion, which
-  runs a single Claude Code agent per task
+- [Momentum](https://github.com/sirsjg/momentum) — the terminal predecessor,
+  which runs a single Claude Code agent per task. Heretic replaces it.
 
 <br>
 
 ## Licence
 
-MIT
+[MIT](LICENSE) © Steve Grehan
