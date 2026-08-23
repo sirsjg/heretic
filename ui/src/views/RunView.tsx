@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
 import type {
   AgentEvent,
@@ -136,6 +136,7 @@ function RunHeader({
   onDismiss: () => void;
 }) {
   const active = run.status === "running" || run.status === "queued";
+  useClock(active);
 
   return (
     <header data-tauri-drag-region="deep" className="shrink-0 border-b px-5 py-3">
@@ -617,6 +618,19 @@ function stripVerdict(text: string): string {
 function shortenPath(path: string): string {
   const parts = path.split("/");
   return parts.length > 3 ? `…/${parts.slice(-2).join("/")}` : path;
+}
+
+/**
+ * Re-render once a second while `active`, so a duration measured against
+ * `Date.now()` actually ticks instead of waiting for the next engine event.
+ */
+function useClock(active: boolean) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => setTick((tick) => tick + 1), 1000);
+    return () => clearInterval(id);
+  }, [active]);
 }
 
 function formatDuration(run: RunRecord): string {

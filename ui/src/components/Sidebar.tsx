@@ -5,6 +5,7 @@ import {
   IconBoard,
   IconModels,
   IconMoon,
+  IconRefresh,
   IconSettings,
   IconSun,
 } from "./icons";
@@ -21,6 +22,8 @@ export function Sidebar() {
     runs,
     theme,
     toggleTheme,
+    syncing,
+    syncFromFlux,
   } = useStore();
 
   const activeRuns = runs.filter(
@@ -42,9 +45,19 @@ export function Sidebar() {
       <ConnectionPill connection={connection} url={settings?.flux.base_url} />
 
       <nav className="flex-1 overflow-y-auto px-2 pb-2">
-        <p className="px-2 pb-1.5 pt-3 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-          Projects
-        </p>
+        <div className="flex items-center justify-between px-2 pb-1.5 pt-3">
+          <p className="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
+            Projects
+          </p>
+          <button
+            onClick={() => void syncFromFlux()}
+            disabled={syncing}
+            title="Refresh from Flux (changes normally arrive on their own)"
+            className="rounded p-0.5 text-[var(--text-faint)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-muted)]"
+          >
+            <IconRefresh className={cx("size-3", syncing && "animate-spin")} />
+          </button>
+        </div>
 
         {projects.length === 0 && (
           <p className="px-2 py-2 text-[12px] leading-snug text-[var(--text-faint)]">

@@ -332,6 +332,20 @@ export type EngineEvent =
   | { kind: "run_output"; run_id: string; item: RunFeedItem }
   | { kind: "notice"; level: string; message: string };
 
+/** What the Rust side relays from Flux's live event stream. */
+export type FluxEvent =
+  | { kind: "connected" }
+  | {
+      kind: "changed";
+      event: string;
+      project_id?: string | null;
+      project_name?: string | null;
+      title?: string | null;
+      status?: string | null;
+    }
+  | { kind: "invalidated" }
+  | { kind: "disconnected"; error: string; retry_in: number };
+
 export interface ConnectionState {
   connected: boolean;
   /** Populated when the server rejected us or could not be reached. */

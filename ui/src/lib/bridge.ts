@@ -13,6 +13,7 @@ import type {
   ModelHost,
   ConnectionState,
   EngineEvent,
+  FluxEvent,
   Project,
   ProjectBinding,
   RunRecord,
@@ -215,15 +216,25 @@ export function onEngineEvent(
   handler: (event: EngineEvent) => void,
 ): () => void {
   if (!isDesktop()) return mock.subscribe(handler);
+  return listenDesktop("engine://event", handler);
+}
 
+/**
+ * Subscribe to changes the Flux server announces on its live stream, relayed
+ * by the Rust side. In the browser there is no server, so nothing arrives.
+ */
+export function onFluxEvent(handler: (event: FluxEvent) => void): () => void {
+  if (!isDesktop()) return () => {};
+  return listenDesktop("flux://event", handler);
+}
+
+function listenDesktop<T>(name: string, handler: (event: T) => void): () => void {
   let unlisten: (() => void) | undefined;
   let cancelled = false;
 
   void (async () => {
     const { listen } = await import("@tauri-apps/api/event");
-    const stop = await listen<EngineEvent>("engine://event", (event) =>
-      handler(event.payload),
-    );
+    const stop = await listen<T>(name, (event) => handler(event.payload));
     if (cancelled) stop();
     else unlisten = stop;
   })();

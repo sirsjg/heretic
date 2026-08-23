@@ -1,7 +1,7 @@
 /** Application state: what's loaded, what's selected, and what's running. */
 
 import { create } from "zustand";
-import { api, onEngineEvent } from "./bridge";
+import { api, onEngineEvent, onFluxEvent } from "./bridge";
 import type {
   BoardView,
   ConnectionState,
@@ -33,10 +33,14 @@ interface State {
   connection: ConnectionState;
   toasts: Toast[];
   theme: "dark" | "light";
+  /** True while a Flux re-sync is in flight, so a refresh button can show it. */
+  syncing: boolean;
 
   initialise: () => Promise<void>;
   selectProject: (projectId: string) => Promise<void>;
   refreshBoard: () => Promise<void>;
+  /** Quietly re-read projects and the open board after Flux changes. */
+  syncFromFlux: () => Promise<void>;
   openScreen: (screen: Screen) => void;
   openRun: (runId: string) => void;
   setEpicAuto: (epicId: string, auto: boolean) => Promise<void>;
@@ -62,6 +66,11 @@ let toastId = 0;
 /// (StrictMode does it deliberately in development), and a second subscription
 /// would apply every event twice — which shows up as a duplicated feed.
 let unsubscribeEngine: (() => void) | null = null;
+let unsubscribeFlux: (() => void) | null = null;
+
+/// Flux announces every mutation separately; one drag on its board can be a
+/// burst of events. Collapse a burst into a single re-fetch.
+let fluxSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** The binding for the selected project, if it has one. */
 export function currentBinding(state: State): ProjectBinding | null {
@@ -85,6 +94,7 @@ export const useStore = create<State>((set, get) => ({
   selectedRunId: null,
   connection: { connected: false },
   toasts: [],
+  syncing: false,
   theme:
     (typeof localStorage !== "undefined" &&
       (localStorage.getItem("heretic.theme") as "dark" | "light" | null)) ||
@@ -124,6 +134,18 @@ export const useStore = create<State>((set, get) => ({
     unsubscribeEngine = onEngineEvent((event) =>
       applyEngineEvent(event, set, get),
     );
+
+    // Anything changing on the Flux server — a project created or deleted, a
+    // task edited in its web UI — lands here and re-syncs the sidebar and board.
+    unsubscribeFlux?.();
+    unsubscribeFlux = onFluxEvent((event) => {
+      if (event.kind === "disconnected") return;
+      if (fluxSyncTimer) return;
+      fluxSyncTimer = setTimeout(() => {
+        fluxSyncTimer = null;
+        void get().syncFromFlux();
+      }, 400);
+    });
   },
 
   async selectProject(projectId) {
@@ -141,6 +163,39 @@ export const useStore = create<State>((set, get) => ({
     } catch (error) {
       set({ boardLoading: false });
       get().notify("error", describe(error));
+    }
+  },
+
+  async syncFromFlux() {
+    // Silent on purpose: this runs on every remote change, so it must not
+    // flash spinners over the board or toast when the server is briefly away.
+    set({ syncing: true });
+    try {
+      const projects = await api.listProjects();
+      set({ projects });
+
+      const current = get().selectedProjectId;
+      if (current && projects.some((project) => project.id === current)) {
+        const board = await api.board(current);
+        // Only apply if the user hasn't switched projects in the meantime.
+        if (get().selectedProjectId === current) set({ board });
+        return;
+      }
+
+      // The open project is gone (or nothing was open) — fall back the same
+      // way startup does: a bound project first, then whatever exists.
+      const bound = projects.find((project) =>
+        (get().settings?.bindings ?? []).some(
+          (binding) => binding.project_id === project.id,
+        ),
+      );
+      const opening = bound?.id ?? projects[0]?.id ?? null;
+      if (opening) await get().selectProject(opening);
+      else set({ selectedProjectId: null, board: null });
+    } catch {
+      // Offline or mid-reconnect; the next event will try again.
+    } finally {
+      set({ syncing: false });
     }
   },
 

@@ -52,28 +52,41 @@ pub fn run() {
             });
 
             // Watch Flux so the board reflects changes made elsewhere, and so
-            // work switched to Auto in the Flux UI is picked up promptly.
+            // work switched to Auto in the Flux UI is picked up promptly. The
+            // watcher is rebuilt whenever the Flux settings change — signing in
+            // or pointing at a new server must not need a restart.
             let handle = app.handle().clone();
             let watch_engine = Arc::clone(&engine);
             tauri::async_runtime::spawn(async move {
-                let settings = watch_engine.settings().await;
-                let watcher = heretic_core::FluxWatcher::start(settings.flux.clone());
-                let mut events = watcher.subscribe();
-
                 loop {
-                    match events.recv().await {
-                        Ok(event) => {
-                            let _ = handle.emit("flux://event", &event);
-                            if matches!(
-                                event,
-                                heretic_core::FluxEvent::Changed(_)
-                                    | heretic_core::FluxEvent::Invalidated
-                            ) {
-                                watch_engine.tick_auto().await;
+                    let config = watch_engine.settings().await.flux;
+                    let watcher = heretic_core::FluxWatcher::start(config.clone());
+                    let mut events = watcher.subscribe();
+                    let mut check =
+                        tokio::time::interval(std::time::Duration::from_secs(3));
+
+                    loop {
+                        tokio::select! {
+                            event = events.recv() => match event {
+                                Ok(event) => {
+                                    let _ = handle.emit("flux://event", &event);
+                                    if matches!(
+                                        event,
+                                        heretic_core::FluxEvent::Changed(_)
+                                            | heretic_core::FluxEvent::Invalidated
+                                    ) {
+                                        watch_engine.tick_auto().await;
+                                    }
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                            },
+                            _ = check.tick() => {
+                                if watch_engine.settings().await.flux != config {
+                                    break;
+                                }
                             }
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
             });

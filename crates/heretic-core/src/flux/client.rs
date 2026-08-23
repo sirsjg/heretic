@@ -58,7 +58,7 @@ pub type Result<T> = std::result::Result<T, FluxError>;
 /// (Cloudflare Access, oauth2-proxy, Authelia, Pomerium and friends). That proxy
 /// authenticates the request *before* Flux ever sees it, so Heretic has to
 /// satisfy two layers: the proxy's credential, and then Flux's own API key.
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct FluxConfig {
     /// Base URL, e.g. `http://localhost:3000` or `https://flux.example.com`.
     pub base_url: String,
