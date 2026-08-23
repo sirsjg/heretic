@@ -24,11 +24,38 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Reads Cargo.lock against the RustSec database; nothing is compiled, so
-      # this needs no toolchain beyond what the image ships.
-      - uses: rustsec/audit-check@v2
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Prebuilt, rather than spending five minutes compiling cargo-audit.
+      - uses: taiki-e/install-action@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tool: cargo-audit
+
+      # Only an actual vulnerability fails this. Informational warnings are
+      # printed but tolerated: Tauri reaches Linux through the GTK3 bindings,
+      # which upstream has archived in favour of gtk4-rs, so the whole gtk/gdk/
+      # atk tree reports as unmaintained. That is Tauri's dependency to move,
+      # not ours, and failing on it would mean a permanently red audit that
+      # nobody reads — which is worse than no audit at all.
+      - name: Audit
+        run: |
+          set -uo pipefail
+          cargo audit --json --file Cargo.lock > audit.json || true
+
+          echo "Informational warnings:"
+          jq -r '.warnings | to_entries[] | .value[]
+                 | "  \(.advisory.id)  \(.package.name) \(.package.version)  (\(.kind))"' \
+            audit.json | sort || true
+
+          count=$(jq '.vulnerabilities.count' audit.json)
+          echo
+          echo "Vulnerabilities: $count"
+          if [ "$count" -ne 0 ]; then
+            jq -r '.vulnerabilities.list[]
+                   | "  \(.advisory.id)  \(.package.name) \(.package.version)\n    \(.advisory.title)"' \
+              audit.json
+            exit 1
+          fi
 
   npm:
     name: npm advisories
