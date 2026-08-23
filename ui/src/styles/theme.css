@@ -1,3 +1,4 @@
+@import "@fontsource/unkempt/700.css";
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
@@ -9,6 +10,7 @@
 --------------------------------------------------------------------------- */
 
 @theme {
+  --font-brand: "Unkempt", cursive;
   --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter",
     "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo,
@@ -47,6 +49,13 @@
   --info: #60a5fa;
   --info-soft: #60a5fa22;
 
+  /* Chart series, in fixed slot order. Stepped for this surface and validated
+     for colour-blind separation — change them as a set, not one at a time. */
+  --chart-1: #7c6bff;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
   --radius: 10px;
 }
@@ -78,6 +87,11 @@
   --danger-soft: #d8443c14;
   --info: #2b6fd6;
   --info-soft: #2b6fd614;
+
+  --chart-1: #5f4bd8;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
 
   --shadow-panel: 0 1px 2px rgb(16 24 40 / 0.05), 0 8px 24px -12px rgb(16 24 40 / 0.18);
 }
@@ -132,6 +146,35 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 6px;
+}
+
+/* Tailwind's reset leaves buttons with the platform's default arrow cursor.
+   Keep pointer feedback consistent for every semantic interactive control,
+   including menu items that are implemented outside the shared primitives. */
+:where(
+  a[href],
+  button:not(:disabled),
+  select:not(:disabled),
+  summary,
+  [role="button"]:not([aria-disabled="true"]),
+  [role="menuitem"]:not([aria-disabled="true"]),
+  [role="option"]:not([aria-disabled="true"]),
+  [role="switch"]:not([aria-disabled="true"]),
+  [role="tab"]:not([aria-disabled="true"])
+) {
+  cursor: pointer;
+}
+
+:where(
+  button:disabled,
+  select:disabled,
+  [role="button"][aria-disabled="true"],
+  [role="menuitem"][aria-disabled="true"],
+  [role="option"][aria-disabled="true"],
+  [role="switch"][aria-disabled="true"],
+  [role="tab"][aria-disabled="true"]
+) {
+  cursor: not-allowed;
 }
 
 /* Respect users who don't want motion. */

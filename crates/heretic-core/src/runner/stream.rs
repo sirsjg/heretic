@@ -18,6 +18,41 @@ pub enum OutputFormat {
     CodexJsonl,
 }
 
+/// Token counts reported by a backend. Cached tokens are kept apart from fresh
+/// input: they cost a fraction of the price and would otherwise dwarf it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+}
+
+impl TokenUsage {
+    pub fn add(&mut self, other: &TokenUsage) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.cache_read_tokens += other.cache_read_tokens;
+        self.cache_creation_tokens += other.cache_creation_tokens;
+    }
+
+    pub fn total(&self) -> u64 {
+        self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_creation_tokens
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.total() == 0
+    }
+}
+
+/// One model's share of a run, when the backend breaks usage down per model.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ModelTokenUsage {
+    pub model: String,
+    pub usage: TokenUsage,
+    pub cost_usd: Option<f64>,
+}
+
 /// A single item in a run's activity feed.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -33,12 +68,17 @@ pub enum AgentEvent {
     Raw { text: String },
     /// Something the agent or its CLI reported as an error.
     Error { message: String },
+    /// Token accounting from the backend. Bookkeeping, not conversation: it is
+    /// folded into the run's stats and never shown in the feed.
+    Usage { usage: TokenUsage },
     /// The agent's closing summary, emitted once at the end of a run.
     Result {
         text: Option<String>,
         is_error: bool,
         duration_ms: Option<u64>,
         cost_usd: Option<f64>,
+        usage: Option<TokenUsage>,
+        model_usage: Vec<ModelTokenUsage>,
     },
 }
 
@@ -53,6 +93,7 @@ impl AgentEvent {
             },
             AgentEvent::Raw { text } => text.clone(),
             AgentEvent::Error { message } => format!("Error: {message}"),
+            AgentEvent::Usage { .. } => String::new(),
             AgentEvent::Result { text, .. } => text.clone().unwrap_or_default(),
         }
     }
@@ -104,9 +145,26 @@ fn parse_codex(value: &serde_json::Value) -> Option<AgentEvent> {
                 .unwrap_or("unknown error")
                 .to_string(),
         }),
+        // Each turn reports what it consumed; the run's stats sum them.
+        Some("turn.completed") => parse_codex_usage(value),
         // Session and turn bookkeeping carries nothing worth showing.
         _ => None,
     }
+}
+
+/// Codex's per-turn `usage` counts cached tokens inside `input_tokens`, so the
+/// cached share is split out to match how Claude reports it.
+fn parse_codex_usage(value: &serde_json::Value) -> Option<AgentEvent> {
+    let usage = value.get("usage")?;
+    let count = |key: &str| usage.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+    let cached = count("cached_input_tokens");
+    let usage = TokenUsage {
+        input_tokens: count("input_tokens").saturating_sub(cached),
+        output_tokens: count("output_tokens"),
+        cache_read_tokens: cached,
+        cache_creation_tokens: 0,
+    };
+    (!usage.is_zero()).then_some(AgentEvent::Usage { usage })
 }
 
 fn parse_codex_item(item: &serde_json::Value) -> Option<AgentEvent> {
@@ -124,9 +182,16 @@ fn parse_codex_item(item: &serde_json::Value) -> Option<AgentEvent> {
         "agent_message" => Some(AgentEvent::Text {
             text: text_of("text").or_else(|| text_of("message"))?,
         }),
-        "error" => Some(AgentEvent::Error {
-            message: text_of("message").unwrap_or_else(|| "unknown error".into()),
-        }),
+        "error" => {
+            let message = text_of("message").unwrap_or_else(|| "unknown error".into());
+            // Codex reports a local model missing from its catalogue as an
+            // error, but with the real context window supplied on the command
+            // line the fallback metadata is exactly what we asked for.
+            if message.contains("Defaulting to fallback metadata") {
+                return Some(AgentEvent::Raw { text: message });
+            }
+            Some(AgentEvent::Error { message })
+        }
         "command_execution" => Some(AgentEvent::Tool {
             name: "Shell".into(),
             detail: text_of("command").map(|c| truncate(&c, 120)),
@@ -258,7 +323,42 @@ fn parse_result(value: &serde_json::Value) -> AgentEvent {
             .unwrap_or(false),
         duration_ms: value.get("duration_ms").and_then(|d| d.as_u64()),
         cost_usd: value.get("total_cost_usd").and_then(|c| c.as_f64()),
+        usage: value.get("usage").map(parse_claude_usage),
+        model_usage: parse_model_usage(value.get("modelUsage")),
     }
+}
+
+fn parse_claude_usage(usage: &serde_json::Value) -> TokenUsage {
+    let count = |key: &str| usage.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+    TokenUsage {
+        input_tokens: count("input_tokens"),
+        output_tokens: count("output_tokens"),
+        cache_read_tokens: count("cache_read_input_tokens"),
+        cache_creation_tokens: count("cache_creation_input_tokens"),
+    }
+}
+
+/// Claude's final `modelUsage` map — one entry per model that served the run,
+/// in camelCase where the top-level `usage` object is snake_case.
+fn parse_model_usage(value: Option<&serde_json::Value>) -> Vec<ModelTokenUsage> {
+    let Some(map) = value.and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    map.iter()
+        .map(|(model, usage)| {
+            let count = |key: &str| usage.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+            ModelTokenUsage {
+                model: model.clone(),
+                usage: TokenUsage {
+                    input_tokens: count("inputTokens"),
+                    output_tokens: count("outputTokens"),
+                    cache_read_tokens: count("cacheReadInputTokens"),
+                    cache_creation_tokens: count("cacheCreationInputTokens"),
+                },
+                cost_usd: usage.get("costUSD").and_then(|c| c.as_f64()),
+            }
+        })
+        .collect()
 }
 
 fn truncate(value: &str, limit: usize) -> String {
@@ -306,8 +406,39 @@ mod tests {
                 is_error: false,
                 duration_ms: Some(4200),
                 cost_usd: Some(0.031),
+                usage: None,
+                model_usage: Vec::new(),
             })
         );
+    }
+
+    #[test]
+    fn the_final_result_carries_tokens_and_the_per_model_breakdown() {
+        let line = r#"{"type":"result","result":"Done.","is_error":false,"duration_ms":4200,"total_cost_usd":0.031,
+            "usage":{"input_tokens":120,"output_tokens":900,"cache_read_input_tokens":45000,"cache_creation_input_tokens":2200},
+            "modelUsage":{"claude-sonnet-5":{"inputTokens":120,"outputTokens":900,"cacheReadInputTokens":45000,"cacheCreationInputTokens":2200,"costUSD":0.031}}}"#;
+        let Some(AgentEvent::Result {
+            usage: Some(usage),
+            model_usage,
+            ..
+        }) = parse_line(line, OutputFormat::ClaudeStreamJson)
+        else {
+            panic!("expected a result with usage");
+        };
+
+        assert_eq!(
+            usage,
+            TokenUsage {
+                input_tokens: 120,
+                output_tokens: 900,
+                cache_read_tokens: 45000,
+                cache_creation_tokens: 2200,
+            }
+        );
+        assert_eq!(model_usage.len(), 1);
+        assert_eq!(model_usage[0].model, "claude-sonnet-5");
+        assert_eq!(model_usage[0].cost_usd, Some(0.031));
+        assert_eq!(model_usage[0].usage.output_tokens, 900);
     }
 
     #[test]
@@ -373,14 +504,42 @@ mod tests {
     }
 
     #[test]
+    fn the_expected_fallback_metadata_notice_is_not_an_error() {
+        // Codex always emits this for a local model, since its catalogue only
+        // knows OpenAI models. The run works; showing it as an error is wrong.
+        let line = r#"{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `qwen3.5:4b` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}"#;
+        match parse_line(line, OutputFormat::CodexJsonl) {
+            Some(AgentEvent::Raw { text }) => {
+                assert!(text.contains("fallback metadata"));
+            }
+            other => panic!("expected an informational event, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn codex_session_bookkeeping_is_dropped() {
         for line in [
             r#"{"type":"thread.started","thread_id":"01a029"}"#,
             r#"{"type":"turn.started"}"#,
-            r#"{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":14}}"#,
         ] {
             assert_eq!(parse_line(line, OutputFormat::CodexJsonl), None, "{line}");
         }
+    }
+
+    #[test]
+    fn a_codex_turn_reports_its_tokens_with_the_cached_share_split_out() {
+        let line = r#"{"type":"turn.completed","usage":{"input_tokens":1120,"cached_input_tokens":1000,"output_tokens":14}}"#;
+        assert_eq!(
+            parse_line(line, OutputFormat::CodexJsonl),
+            Some(AgentEvent::Usage {
+                usage: TokenUsage {
+                    input_tokens: 120,
+                    output_tokens: 14,
+                    cache_read_tokens: 1000,
+                    cache_creation_tokens: 0,
+                }
+            })
+        );
     }
 
     #[test]

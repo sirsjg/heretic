@@ -9,6 +9,7 @@ import type {
 } from "../lib/types";
 import { STAGE_LABELS } from "../lib/types";
 import { Badge, Button, Dot, EmptyState, Spinner, cx } from "../components/ui";
+import { RunStats } from "../components/RunStats";
 import {
   IconBranch,
   IconCheck,
@@ -350,7 +351,10 @@ function Feed({
           />
         ))}
         {run.status !== "running" && run.status !== "queued" && (
-          <Outcome run={run} onIntegrate={onIntegrate} onDiscard={onDiscard} />
+          <>
+            <Outcome run={run} onIntegrate={onIntegrate} onDiscard={onDiscard} />
+            <RunStats run={run} />
+          </>
         )}
         <div ref={endRef} />
       </div>
@@ -487,6 +491,9 @@ function FeedRow({
   repeats?: number;
 }) {
   const stageLabel = STAGE_LABELS[stage];
+
+  // Token accounting belongs to the stats panel, not the conversation.
+  if (event.type === "usage") return null;
 
   if (event.type === "tool") {
     return (

@@ -6,7 +6,7 @@
 
 use crate::config::{ModelProfile, Role};
 use crate::model::TaskStatus;
-use crate::runner::{AgentEvent, AgentOutcome, CancelToken};
+use crate::runner::{AgentEvent, AgentOutcome, CancelToken, ModelTokenUsage, TokenUsage};
 use crate::worktree::ChangeSummary;
 use serde::Serialize;
 use std::path::Path;
@@ -103,6 +103,25 @@ pub struct RunFeedItem {
     pub event: AgentEvent,
 }
 
+/// What one agent invocation consumed: tokens, time, and money.
+///
+/// A run collects one of these per stage — including each trip round the
+/// review loop — so the finished run can show where the tokens went.
+#[derive(Debug, Clone, Serialize)]
+pub struct StageStats {
+    pub stage: RunStage,
+    pub role: Option<Role>,
+    /// The profile that ran, as shown in the feed ("Claude Code · Reviewer").
+    pub agent: Option<String>,
+    /// Wall-clock time of the agent process.
+    pub duration_ms: u64,
+    pub usage: TokenUsage,
+    pub cost_usd: Option<f64>,
+    /// Per-model breakdown when the backend reports one; otherwise a single
+    /// entry under the profile's configured model.
+    pub models: Vec<ModelTokenUsage>,
+}
+
 /// Progress reported while a run is in flight.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -121,6 +140,8 @@ pub enum RunProgress {
         ok: bool,
         summary: Option<String>,
     },
+    /// What a finished agent stage consumed.
+    StageStats(StageStats),
     /// The reviewer sent the work back; the implementer is going round again.
     RevisionRequested { attempt: u32, notes: String },
     /// A note from the engine itself, not from an agent.
@@ -167,6 +188,8 @@ pub struct RunRecord {
     pub landing: Landing,
     pub changes: ChangeSummary,
     pub result: Option<RunResult>,
+    /// Tokens, time and spend per agent stage, in the order the stages ran.
+    pub stats: Vec<StageStats>,
     /// Capped activity feed — the full transcript lives on disk.
     pub feed: Vec<RunFeedItem>,
 }

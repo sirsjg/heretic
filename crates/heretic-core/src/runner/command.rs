@@ -76,6 +76,14 @@ pub fn build_command(profile: &ModelProfile, prompt: &str) -> AgentCommand {
             }
 
             if let RunnerKind::CodexOss { base_url } = &profile.runner {
+                // Codex tries to refresh its own model catalogue from
+                // `{base_url}/models` in its internal schema, which no
+                // OpenAI-compatible server answers; the failure is harmless but
+                // logged at ERROR on every run. Silence just that module,
+                // unless the profile sets its own filter.
+                env.entry("RUST_LOG".into())
+                    .or_insert_with(|| "error,codex_models_manager=off".into());
+
                 match base_url.as_deref().filter(|url| !url.is_empty()) {
                     // A host of our own: Codex refuses to override its built-in
                     // provider ids, so declare a separate one pointing at it.
@@ -307,6 +315,37 @@ mod tests {
         let model = command.args.iter().position(|a| a == "-m").unwrap();
         assert_eq!(command.args[model + 1], "qwen3-coder:480b");
         assert_eq!(command.args.last().unwrap(), "build it");
+    }
+
+    #[test]
+    fn local_codex_runs_silence_the_model_catalogue_noise() {
+        // Codex's catalogue refresh always fails against an OpenAI-compatible
+        // host and logs it at ERROR; only that module is turned off.
+        let with_host = build_command(
+            &profile(RunnerKind::CodexOss {
+                base_url: Some("http://spark.local:11434".into()),
+            }),
+            "hi",
+        );
+        assert_eq!(
+            with_host.env.get("RUST_LOG").map(String::as_str),
+            Some("error,codex_models_manager=off")
+        );
+
+        let oss = build_command(&profile(RunnerKind::CodexOss { base_url: None }), "hi");
+        assert!(oss.env.contains_key("RUST_LOG"));
+
+        // A cloud Codex profile keeps its logging untouched.
+        let cloud = build_command(&profile(RunnerKind::Codex), "hi");
+        assert!(!cloud.env.contains_key("RUST_LOG"));
+    }
+
+    #[test]
+    fn a_profile_supplied_log_filter_wins() {
+        let mut p = profile(RunnerKind::CodexOss { base_url: None });
+        p.env.insert("RUST_LOG".into(), "debug".into());
+        let command = build_command(&p, "hi");
+        assert_eq!(command.env.get("RUST_LOG").map(String::as_str), Some("debug"));
     }
 
     #[test]

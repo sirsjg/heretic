@@ -236,17 +236,47 @@ export type RunStatus =
   | "cancelled"
   | "needs_attention";
 
+/** Token counts, with cached tokens kept apart from fresh input. */
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
+/** One model's share of a run, when the backend breaks usage down per model. */
+export interface ModelTokenUsage {
+  model: string;
+  usage: TokenUsage;
+  cost_usd?: number | null;
+}
+
+/** What one agent stage consumed: tokens, time, and money. */
+export interface StageStats {
+  stage: RunStage;
+  role?: Role | null;
+  /** The profile that ran, as shown in the feed ("Claude Code · Reviewer"). */
+  agent?: string | null;
+  duration_ms: number;
+  usage: TokenUsage;
+  cost_usd?: number | null;
+  models: ModelTokenUsage[];
+}
+
 export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "tool"; name: string; detail?: string | null }
   | { type: "raw"; text: string }
   | { type: "error"; message: string }
+  | { type: "usage"; usage: TokenUsage }
   | {
       type: "result";
       text?: string | null;
       is_error: boolean;
       duration_ms?: number | null;
       cost_usd?: number | null;
+      usage?: TokenUsage | null;
+      model_usage?: ModelTokenUsage[];
     };
 
 export interface RunFeedItem {
@@ -292,6 +322,8 @@ export interface RunRecord {
   landing: Landing;
   changes: ChangeSummary;
   result?: RunResult | null;
+  /** Tokens, time and spend per agent stage, in the order the stages ran. */
+  stats: StageStats[];
   feed: RunFeedItem[];
 }
 

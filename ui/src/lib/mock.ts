@@ -14,6 +14,7 @@ import type {
   RunFeedItem,
   RunRecord,
   Settings,
+  StageStats,
   Task,
   TaskView,
 } from "./types";
@@ -301,6 +302,85 @@ const RUN_SCRIPT: RunFeedItem[] = [
   { stage: "reviewing", role: "reviewer", event: { type: "result", text: "All criteria satisfied.\n\nVERDICT: approve", is_error: false, duration_ms: 22000, cost_usd: 0.04 } },
 ];
 
+/** The stats the engine would have collected for the scripted run above. */
+const RUN_STATS: StageStats[] = [
+  {
+    stage: "planning",
+    role: "orchestrator",
+    agent: "Claude Code · Orchestrator",
+    duration_ms: 63000,
+    usage: { input_tokens: 2100, output_tokens: 1450, cache_read_tokens: 182000, cache_creation_tokens: 8400 },
+    cost_usd: 0.11,
+    models: [
+      {
+        model: "claude-sonnet-5",
+        usage: { input_tokens: 2100, output_tokens: 1450, cache_read_tokens: 182000, cache_creation_tokens: 8400 },
+        cost_usd: 0.11,
+      },
+    ],
+  },
+  {
+    stage: "implementing",
+    role: "implementer",
+    agent: "Qwen3 Coder (local) · Implementer",
+    duration_ms: 184000,
+    usage: { input_tokens: 46000, output_tokens: 9800, cache_read_tokens: 152000, cache_creation_tokens: 0 },
+    cost_usd: null,
+    models: [
+      {
+        model: "qwen3-coder:30b",
+        usage: { input_tokens: 46000, output_tokens: 9800, cache_read_tokens: 152000, cache_creation_tokens: 0 },
+        cost_usd: null,
+      },
+    ],
+  },
+  {
+    stage: "reviewing",
+    role: "reviewer",
+    agent: "Claude Code · Reviewer",
+    duration_ms: 41000,
+    usage: { input_tokens: 900, output_tokens: 620, cache_read_tokens: 96000, cache_creation_tokens: 3800 },
+    cost_usd: 0.09,
+    models: [
+      {
+        model: "claude-sonnet-5",
+        usage: { input_tokens: 900, output_tokens: 620, cache_read_tokens: 96000, cache_creation_tokens: 3800 },
+        cost_usd: 0.09,
+      },
+    ],
+  },
+  {
+    stage: "implementing",
+    role: "implementer",
+    agent: "Qwen3 Coder (local) · Implementer",
+    duration_ms: 52000,
+    usage: { input_tokens: 5200, output_tokens: 2900, cache_read_tokens: 62000, cache_creation_tokens: 0 },
+    cost_usd: null,
+    models: [
+      {
+        model: "qwen3-coder:30b",
+        usage: { input_tokens: 5200, output_tokens: 2900, cache_read_tokens: 62000, cache_creation_tokens: 0 },
+        cost_usd: null,
+      },
+    ],
+  },
+  {
+    stage: "reviewing",
+    role: "reviewer",
+    agent: "Claude Code · Reviewer",
+    duration_ms: 22000,
+    usage: { input_tokens: 300, output_tokens: 210, cache_read_tokens: 98000, cache_creation_tokens: 900 },
+    cost_usd: 0.04,
+    models: [
+      {
+        model: "claude-sonnet-5",
+        usage: { input_tokens: 300, output_tokens: 210, cache_read_tokens: 98000, cache_creation_tokens: 900 },
+        cost_usd: 0.04,
+      },
+    ],
+  },
+];
+
 let runCounter = 0;
 
 /** A simulated engine that streams a scripted run, for developing the UI. */
@@ -393,6 +473,7 @@ export class MockEngine {
       landing: "nothing",
       worktree_path: `~/.local/share/heretic/worktrees/${projectId}/${taskId}`,
       changes: { files_changed: 0, insertions: 0, deletions: 0, files: [] },
+      stats: [],
       feed: [],
     };
 
@@ -413,6 +494,7 @@ export class MockEngine {
       run.result = { kind: "completed" };
       run.finished_at = new Date().toISOString();
       run.landing = "on_branch";
+      run.stats = structuredClone(RUN_STATS);
       run.changes = {
         files_changed: 18,
         insertions: 1240,

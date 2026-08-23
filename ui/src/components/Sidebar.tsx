@@ -6,7 +6,6 @@ import {
   IconModels,
   IconMoon,
   IconSettings,
-  IconSparks,
   IconSun,
 } from "./icons";
 
@@ -35,17 +34,9 @@ export function Sidebar() {
     >
       <div
         data-tauri-drag-region="deep"
-        className="titlebar-safe flex h-14 items-center gap-2 px-4 pt-1"
+        className="titlebar-safe flex h-14 items-center px-4 pt-1"
       >
-        <div
-          className="grid size-6 place-items-center rounded-md"
-          style={{
-            background: "linear-gradient(135deg, var(--accent), var(--accent-2))",
-          }}
-        >
-          <IconSparks className="size-3.5 text-white" />
-        </div>
-        <span className="text-[14px] font-semibold tracking-tight">Heretic</span>
+        <span className="font-brand text-[19px] font-bold tracking-wide">Heretic</span>
       </div>
 
       <ConnectionPill connection={connection} url={settings?.flux.base_url} />

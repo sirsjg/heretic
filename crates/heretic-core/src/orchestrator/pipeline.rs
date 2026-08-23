@@ -4,12 +4,13 @@
 //! without Flux, git, or a real agent.
 
 use super::types::{
-    AgentExecutor, Board, RunFeedItem, RunOutcome, RunProgress, RunResult, RunStage, Workspace,
+    AgentExecutor, Board, RunFeedItem, RunOutcome, RunProgress, RunResult, RunStage, StageStats,
+    Workspace,
 };
 use crate::config::{ModelProfile, Pipeline, Role};
 use crate::model::TaskStatus;
 use crate::prompt::{self, TaskContext, Verdict};
-use crate::runner::{AgentEvent, CancelToken, Completion};
+use crate::runner::{AgentEvent, AgentOutcome, CancelToken, Completion, ModelTokenUsage, TokenUsage};
 use crate::worktree::ChangeSummary;
 use std::collections::BTreeMap;
 use tokio::sync::mpsc;
@@ -380,6 +381,10 @@ async fn run_stage(
     let feed = progress.clone();
     let forwarder = tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
+            // Token accounting is folded into the stage's stats, not read aloud.
+            if matches!(event, AgentEvent::Usage { .. }) {
+                continue;
+            }
             let _ = feed
                 .send(RunProgress::Output(RunFeedItem {
                     stage,
@@ -415,6 +420,12 @@ async fn run_stage(
             StageResult::Failed(reason)
         }
         Ok(outcome) => {
+            let _ = progress
+                .send(RunProgress::StageStats(stage_stats(
+                    stage, role, profile, &outcome,
+                )))
+                .await;
+
             let summary = outcome.final_message().or_else(|| {
                 let tail = outcome.tail(20);
                 (!tail.trim().is_empty()).then_some(tail)
@@ -447,6 +458,67 @@ async fn run_stage(
 
             stage_result
         }
+    }
+}
+
+/// Fold a stage's transcript into token, time and spend figures.
+///
+/// Claude reports totals (and a per-model split) on its final `result` line;
+/// Codex reports per-turn `Usage` events that are summed here. The two never
+/// coexist in one transcript, so adding both cannot double-count.
+fn stage_stats(
+    stage: RunStage,
+    role: Role,
+    profile: &ModelProfile,
+    outcome: &AgentOutcome,
+) -> StageStats {
+    let mut usage = TokenUsage::default();
+    let mut cost_usd = None;
+    let mut models: Vec<ModelTokenUsage> = Vec::new();
+
+    for event in &outcome.transcript {
+        match event {
+            AgentEvent::Usage { usage: turn } => usage.add(turn),
+            AgentEvent::Result {
+                usage: totals,
+                cost_usd: cost,
+                model_usage,
+                ..
+            } => {
+                if let Some(totals) = totals {
+                    usage.add(totals);
+                }
+                if cost.is_some() {
+                    cost_usd = *cost;
+                }
+                if !model_usage.is_empty() {
+                    models = model_usage.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // A backend with no per-model split still worked under exactly one model.
+    if models.is_empty() && !usage.is_zero() {
+        models.push(ModelTokenUsage {
+            model: profile
+                .model
+                .clone()
+                .unwrap_or_else(|| profile.name.clone()),
+            usage,
+            cost_usd,
+        });
+    }
+
+    StageStats {
+        stage,
+        role: Some(role),
+        agent: Some(profile.agent_name(role)),
+        duration_ms: outcome.duration.as_millis() as u64,
+        usage,
+        cost_usd,
+        models,
     }
 }
 
@@ -866,7 +938,14 @@ mod tests {
                         text: Some(text.clone()),
                         is_error: false,
                         duration_ms: Some(1),
-                        cost_usd: None,
+                        cost_usd: Some(0.02),
+                        usage: Some(crate::runner::TokenUsage {
+                            input_tokens: 100,
+                            output_tokens: 40,
+                            cache_read_tokens: 900,
+                            cache_creation_tokens: 10,
+                        }),
+                        model_usage: Vec::new(),
                     };
                     let _ = sink.send(event.clone()).await;
                     Ok(AgentOutcome {
@@ -971,7 +1050,7 @@ mod tests {
             vec![StageScript::Says("Looks right.\nVERDICT: approve".into())],
         );
 
-        let (outcome, _) = run(
+        let (outcome, progress) = run(
             config(Pipeline::default(), &[Role::Implementer, Role::Reviewer]),
             &board,
             &workspace,
@@ -982,6 +1061,21 @@ mod tests {
 
         assert_eq!(outcome.result, RunResult::Completed);
         assert_eq!(outcome.revisions, 0);
+
+        // Each agent stage accounts for what it consumed.
+        let stats: Vec<&StageStats> = progress
+            .iter()
+            .filter_map(|p| match p {
+                RunProgress::StageStats(stats) => Some(stats),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stats.len(), 2, "one stats entry per agent stage");
+        assert_eq!(stats[0].stage, RunStage::Implementing);
+        assert_eq!(stats[0].usage.output_tokens, 40);
+        assert_eq!(stats[0].cost_usd, Some(0.02));
+        assert_eq!(stats[0].models.len(), 1);
+        assert_eq!(stats[1].stage, RunStage::Reviewing);
         assert_eq!(
             board.statuses(),
             vec![TaskStatus::InProgress, TaskStatus::Done]

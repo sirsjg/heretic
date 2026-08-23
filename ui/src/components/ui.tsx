@@ -20,7 +20,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 const BUTTON_BASE =
   "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap " +
   "transition-[background,border-color,color,opacity] duration-150 " +
-  "disabled:opacity-40 disabled:pointer-events-none select-none";
+  "disabled:opacity-40 select-none";
 
 export function Button({
   variant = "secondary",

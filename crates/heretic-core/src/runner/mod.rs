@@ -7,4 +7,4 @@ pub mod stream;
 
 pub use command::{build_command, AgentCommand};
 pub use process::{run_agent, AgentOutcome, CancelToken, Completion};
-pub use stream::{AgentEvent, OutputFormat};
+pub use stream::{AgentEvent, ModelTokenUsage, OutputFormat, TokenUsage};

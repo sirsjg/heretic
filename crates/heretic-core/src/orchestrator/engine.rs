@@ -347,6 +347,7 @@ impl Engine {
             landing: Landing::Nothing,
             changes: ChangeSummary::default(),
             result: None,
+            stats: Vec::new(),
             feed: Vec::new(),
         };
 
@@ -578,6 +579,9 @@ impl Engine {
                     run_id: run_id.to_string(),
                     item,
                 });
+            }
+            RunProgress::StageStats(stats) => {
+                self.update(run_id, |run| run.stats.push(stats)).await;
             }
             RunProgress::StageFinished { .. } => {}
         }
