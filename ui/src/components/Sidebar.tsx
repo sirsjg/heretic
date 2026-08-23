@@ -56,6 +56,11 @@ export function Sidebar() {
           const binding = settings?.bindings.find(
             (b) => b.project_id === project.id,
           );
+          const running = runs.some(
+            (run) =>
+              run.project_id === project.id &&
+              (run.status === "running" || run.status === "queued"),
+          );
           const active = project.id === selectedProjectId && screen === "board";
           return (
             <button
@@ -68,13 +73,22 @@ export function Sidebar() {
               )}
             >
               <span
-                className="size-1.5 shrink-0 rounded-full"
+                className={cx(
+                  "size-1.5 shrink-0 rounded-full",
+                  running && "running-dot",
+                )}
                 style={{
                   background: binding
                     ? "var(--success)"
                     : "var(--text-faint)",
                 }}
-                title={binding ? "Folder configured" : "No folder set"}
+                title={
+                  running
+                    ? "A run is in progress"
+                    : binding
+                      ? "Folder configured"
+                      : "No folder set"
+                }
               />
               <span
                 className={cx(
