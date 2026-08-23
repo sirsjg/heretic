@@ -14,6 +14,7 @@ import {
 } from "../components/ui";
 import { IconClose, IconModels } from "../components/icons";
 import { DetectPanel } from "./DetectPanel";
+import { knownModelsFor, modelLabel } from "../lib/models";
 
 const RUNNER_OPTIONS = [
   { value: "claude_code", label: "Claude Code" },
@@ -29,9 +30,9 @@ function runnerKey(runner: RunnerKind): string {
 function runnerDescription(profile: ModelProfile): string {
   switch (profile.runner.kind) {
     case "claude_code":
-      return `claude${profile.model ? ` · ${profile.model}` : ""}`;
+      return `claude${profile.model ? ` · ${modelLabel("claude_code", profile.model)}` : ""}`;
     case "codex":
-      return `codex${profile.model ? ` · ${profile.model}` : ""}`;
+      return `codex${profile.model ? ` · ${modelLabel("codex", profile.model)}` : ""}`;
     case "codex_oss":
       return profile.runner.base_url
         ? `codex · ${profile.model ?? "default"} · ${profile.runner.base_url}`
@@ -266,6 +267,12 @@ function ProfileEditor({
   onDelete: () => void;
 }) {
   const kind = runnerKey(profile.runner);
+  const knownModels = knownModelsFor(kind);
+  const [customModel, setCustomModel] = useState(false);
+  const useCustomModel =
+    knownModels !== null &&
+    (customModel ||
+      (!!profile.model && !knownModels.some((m) => m.value === profile.model)));
 
   function setRunnerKind(next: string) {
     const runner: RunnerKind =
@@ -276,7 +283,9 @@ function ProfileEditor({
           : next === "codex"
             ? { kind: "codex" }
             : { kind: "claude_code" };
-    onChange({ ...profile, runner });
+    // A model id rarely survives a runner switch, so fall back to the default.
+    setCustomModel(false);
+    onChange({ ...profile, runner, model: null });
   }
 
   return (
@@ -298,18 +307,56 @@ function ProfileEditor({
       <Field
         label="Model"
         hint={
-          kind === "codex_oss"
-            ? "An Ollama tag, e.g. qwen3-coder:30b. Pull it first with `ollama pull`."
-            : "Leave empty to use the CLI's own default."
+          knownModels
+            ? useCustomModel
+              ? "Any model id the CLI accepts."
+              : "Default lets the CLI pick its usual model."
+            : kind === "codex_oss"
+              ? "An Ollama tag, e.g. qwen3-coder:30b. Pull it first with `ollama pull`."
+              : "Leave empty to use the CLI's own default."
         }
       >
-        <Input
-          value={profile.model ?? ""}
-          placeholder={kind === "codex_oss" ? "qwen3-coder:30b" : "default"}
-          onChange={(e) =>
-            onChange({ ...profile, model: e.target.value || null })
-          }
-        />
+        {knownModels ? (
+          <div className="flex flex-col gap-2">
+            <Select
+              value={
+                useCustomModel ? "__custom__" : (profile.model ?? "")
+              }
+              onChange={(value) => {
+                if (value === "__custom__") {
+                  setCustomModel(true);
+                } else {
+                  setCustomModel(false);
+                  onChange({ ...profile, model: value || null });
+                }
+              }}
+              options={[
+                { value: "", label: "Default" },
+                ...knownModels,
+                { value: "__custom__", label: "Custom…" },
+              ]}
+            />
+            {useCustomModel && (
+              <Input
+                value={profile.model ?? ""}
+                placeholder={
+                  kind === "codex" ? "gpt-5.6-sol" : "claude-opus-5"
+                }
+                onChange={(e) =>
+                  onChange({ ...profile, model: e.target.value || null })
+                }
+              />
+            )}
+          </div>
+        ) : (
+          <Input
+            value={profile.model ?? ""}
+            placeholder={kind === "codex_oss" ? "qwen3-coder:30b" : "default"}
+            onChange={(e) =>
+              onChange({ ...profile, model: e.target.value || null })
+            }
+          />
+        )}
       </Field>
 
       {profile.runner.kind === "codex_oss" && (
