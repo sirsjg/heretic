@@ -14,6 +14,7 @@ src-tauri/target
 # Local config & scratch
 .DS_Store
 *.local
+*.log
 .env
 
 # TypeScript incremental build state

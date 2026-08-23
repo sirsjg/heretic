@@ -256,7 +256,7 @@ const DEFAULT_SETTINGS: Settings = {
   bindings: [
     {
       project_id: "mgdr6ar",
-      repo_path: "/Users/steve/code/corporate-travel",
+      repo_path: "/home/dev/code/corporate-travel",
       base_branch: "main",
       isolation: "worktree",
       integration: "leave",
