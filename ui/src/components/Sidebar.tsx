@@ -136,12 +136,7 @@ export function Sidebar() {
           active={screen === "models"}
           onClick={() => openScreen("models")}
         />
-        <NavItem
-          icon={<IconSettings />}
-          label="Settings"
-          active={screen === "settings"}
-          onClick={() => openScreen("settings")}
-        />
+
         <button
           onClick={toggleTheme}
           className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-3)]"
@@ -149,6 +144,12 @@ export function Sidebar() {
           {theme === "dark" ? <IconSun /> : <IconMoon />}
           {theme === "dark" ? "Light theme" : "Dark theme"}
         </button>
+        <NavItem
+          icon={<IconSettings />}
+          label="Settings"
+          active={screen === "settings"}
+          onClick={() => openScreen("settings")}
+        />
       </div>
     </aside>
   );
