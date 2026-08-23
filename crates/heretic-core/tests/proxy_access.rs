@@ -127,11 +127,7 @@ async fn writes_reach_flux_through_the_proxy() {
     let task = tasks.first().expect("seeded task");
 
     client
-        .add_comment(
-            &task.id,
-            "Reached Flux through the proxy.",
-            Some("Heretic"),
-        )
+        .add_comment(&task.id, "Reached Flux through the proxy.", Some("Heretic"))
         .await
         .expect("the write should have gone through");
 }

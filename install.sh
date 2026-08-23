@@ -189,8 +189,9 @@ Categories=Development;
 StartupWMClass=Heretic
 DESKTOP
 
-  command -v update-desktop-database >/dev/null 2>&1 &&
+  if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$applications_dir" >/dev/null 2>&1 || true
+  fi
 fi
 
 note "Installed Heretic $version to $install_dir/heretic"

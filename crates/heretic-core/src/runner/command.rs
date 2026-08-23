@@ -302,9 +302,7 @@ mod tests {
 
         assert!(!command.args.contains(&"--oss".to_string()));
         assert!(
-            joined.contains(
-                "model_providers.heretic-oss.base_url=\"http://spark.local:11434/v1\""
-            ),
+            joined.contains("model_providers.heretic-oss.base_url=\"http://spark.local:11434/v1\""),
             "{joined}"
         );
         // Current Codex accepts only the responses wire format from a custom
@@ -345,7 +343,10 @@ mod tests {
         let mut p = profile(RunnerKind::CodexOss { base_url: None });
         p.env.insert("RUST_LOG".into(), "debug".into());
         let command = build_command(&p, "hi");
-        assert_eq!(command.env.get("RUST_LOG").map(String::as_str), Some("debug"));
+        assert_eq!(
+            command.env.get("RUST_LOG").map(String::as_str),
+            Some("debug")
+        );
     }
 
     #[test]
@@ -429,9 +430,6 @@ mod tests {
         });
         let shown = build_command(&p, "hi").display("hi");
         // Exactly what a user needs to see when a backend rejects a flag.
-        assert!(
-            shown.contains("model_provider=\"heretic-oss\""),
-            "{shown}"
-        );
+        assert!(shown.contains("model_provider=\"heretic-oss\""), "{shown}");
     }
 }

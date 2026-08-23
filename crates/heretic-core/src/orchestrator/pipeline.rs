@@ -10,7 +10,9 @@ use super::types::{
 use crate::config::{ModelProfile, Pipeline, Role};
 use crate::model::TaskStatus;
 use crate::prompt::{self, TaskContext, Verdict};
-use crate::runner::{AgentEvent, AgentOutcome, CancelToken, Completion, ModelTokenUsage, TokenUsage};
+use crate::runner::{
+    AgentEvent, AgentOutcome, CancelToken, Completion, ModelTokenUsage, TokenUsage,
+};
 use crate::worktree::ChangeSummary;
 use std::collections::BTreeMap;
 use tokio::sync::mpsc;

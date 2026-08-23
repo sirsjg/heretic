@@ -201,7 +201,7 @@ impl Task {
     /// Guardrails sorted most-critical first.
     pub fn guardrails_by_severity(&self) -> Vec<&Guardrail> {
         let mut sorted: Vec<&Guardrail> = self.guardrails.iter().collect();
-        sorted.sort_by(|a, b| b.number.cmp(&a.number));
+        sorted.sort_by_key(|g| std::cmp::Reverse(g.number));
         sorted
     }
 }
