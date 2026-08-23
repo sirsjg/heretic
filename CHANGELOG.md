@@ -40,6 +40,8 @@ The first release. Heretic replaces
 
 ### Distribution
 
-- Signed-and-checksummed `.dmg`, `.AppImage` and `.deb` bundles for macOS
-  (Apple Silicon and Intel) and Linux x86_64.
-- A `curl | sh` installer, and a Homebrew cask for macOS.
+- `.dmg`, `.AppImage` and `.deb` bundles for macOS (Apple Silicon and Intel) and
+  Linux x86_64, published with a `checksums.txt`. macOS bundles are ad-hoc
+  signed; notarisation needs a Developer ID this project does not have.
+- A `curl | sh` installer that verifies the checksum before installing, and a
+  Homebrew cask for macOS.

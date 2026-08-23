@@ -1,0 +1,48 @@
+name: Audit
+
+# Advisories land against dependencies long after they are merged, so this runs
+# on a schedule rather than on every pull request — a new advisory is news, not
+# a reason to block someone's unrelated change.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  push:
+    paths:
+      - "Cargo.lock"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cargo:
+    name: Cargo advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Reads Cargo.lock against the RustSec database; nothing is compiled, so
+      # this needs no toolchain beyond what the image ships.
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  npm:
+    name: npm advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm audit --audit-level high
