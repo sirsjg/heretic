@@ -451,6 +451,7 @@ crates/heretic-core/   the engine — no UI framework anywhere in it
   worktree.rs          git worktrees, diffs, commits, merges
   prompt.rs            the brief each role works from
   orchestrator/        the run state machine and the engine
+  history.rs           run journals: what survives a restart
   detect.rs            finding agent CLIs and the models each host holds
 crates/heretic-app/    the Tauri shell: commands and events, and little else
 ui/                    React + Tailwind front end

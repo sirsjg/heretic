@@ -8,6 +8,7 @@
 pub mod config;
 pub mod detect;
 pub mod flux;
+pub mod history;
 pub mod model;
 pub mod orchestrator;
 pub mod paths;
@@ -19,5 +20,6 @@ pub mod worktree;
 
 pub use config::{Isolation, ModelProfile, Pipeline, ProjectBinding, Role, RunnerKind, Settings};
 pub use flux::{FluxClient, FluxConfig, FluxError, FluxEvent, FluxWatcher};
+pub use history::RunHistory;
 pub use model::{Epic, Priority, Project, Task, TaskStatus};
 pub use orchestrator::{Engine, EngineEvent, RunRecord, RunStage, RunStatus};

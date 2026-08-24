@@ -1,5 +1,6 @@
 //! Shared application state.
 
+use heretic_core::history::RunHistory;
 use heretic_core::orchestrator::Engine;
 use heretic_core::store::SettingsStore;
 use heretic_core::Settings;
@@ -11,7 +12,8 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Load settings from disk, falling back to a starter configuration.
+    /// Load settings and past runs from disk, falling back to a starter
+    /// configuration.
     ///
     /// A corrupt settings file must not stop the app from opening — the user
     /// needs the Settings screen to fix it.
@@ -26,7 +28,7 @@ impl AppState {
         };
 
         Self {
-            engine: Arc::new(Engine::new(settings)),
+            engine: Arc::new(Engine::with_history(settings, RunHistory::default())),
             store,
         }
     }

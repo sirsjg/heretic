@@ -52,3 +52,8 @@ pub fn settings_file() -> PathBuf {
 pub fn worktree_root(project_id: &str) -> PathBuf {
     data_dir().join("worktrees").join(project_id)
 }
+
+/// Run journals, one JSONL file per run.
+pub fn runs_dir() -> PathBuf {
+    data_dir().join("runs")
+}

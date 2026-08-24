@@ -8,6 +8,7 @@ use super::types::{
 };
 use crate::config::{Integration, Isolation, ModelProfile, ProjectBinding, Role, Settings};
 use crate::flux::{FluxClient, FluxError};
+use crate::history::RunHistory;
 use crate::model::{Task, TaskStatus};
 use crate::paths;
 use crate::prompt::TaskContext;
@@ -176,22 +177,68 @@ pub enum EngineError {
     NothingToLand,
 }
 
+/// Settle a run that was still in flight when Heretic last closed.
+///
+/// Its agent died with the process, so nothing is coming to finish it — but the
+/// worktree it was working in is still on disk. If the run had a branch, the
+/// record is left offering the same merge-or-discard choice a finished run
+/// gets: that decision is the only route back to the leftover checkout, and
+/// without it the worktree is stranded with nothing in the interface pointing
+/// at it. What is on the branch may well be half a task, which is why this
+/// asks for attention rather than reporting a failure.
+///
+/// Returns whether anything changed.
+fn interrupt(run: &mut RunRecord) -> bool {
+    if !run.is_active() {
+        return false;
+    }
+
+    run.status = RunStatus::NeedsAttention;
+    run.result = Some(RunResult::NeedsAttention {
+        reason: "Heretic closed while this run was working".into(),
+    });
+    run.finished_at = Some(chrono::Utc::now().to_rfc3339());
+    if run.branch.is_some() && run.landing == Landing::Nothing {
+        run.landing = Landing::OnBranch;
+    }
+
+    true
+}
+
 /// Owns settings, the Flux connection and every run in flight.
 pub struct Engine {
     settings: Arc<RwLock<Settings>>,
     runs: Arc<RwLock<HashMap<String, RunRecord>>>,
     cancels: Arc<RwLock<HashMap<String, CancelToken>>>,
     events: broadcast::Sender<EngineEvent>,
+    history: RunHistory,
 }
 
 impl Engine {
+    /// An engine that forgets its runs when the process ends.
     pub fn new(settings: Settings) -> Self {
+        Self::with_history(settings, RunHistory::disabled())
+    }
+
+    /// An engine that starts from the runs already in `history`, and journals
+    /// everything after that back to it.
+    pub fn with_history(settings: Settings, history: RunHistory) -> Self {
         let (events, _) = broadcast::channel(1024);
+
+        let mut runs = HashMap::new();
+        for mut run in history.load() {
+            if interrupt(&mut run) {
+                history.record(&run);
+            }
+            runs.insert(run.id.clone(), run);
+        }
+
         Self {
             settings: Arc::new(RwLock::new(settings)),
-            runs: Arc::new(RwLock::new(HashMap::new())),
+            runs: Arc::new(RwLock::new(runs)),
             cancels: Arc::new(RwLock::new(HashMap::new())),
             events,
+            history,
         }
     }
 
@@ -264,6 +311,7 @@ impl Engine {
         };
         if removed {
             self.cancels.write().await.remove(run_id);
+            self.history.forget(run_id);
         }
         removed
     }
@@ -355,6 +403,7 @@ impl Engine {
             .write()
             .await
             .insert(run_id.clone(), record.clone());
+        self.history.record(&record);
         let cancel = CancelToken::new();
         self.cancels
             .write()
@@ -584,6 +633,9 @@ impl Engine {
                 run.push_feed(item.clone());
             }
         }
+        // The journal takes every event, including the ones the in-memory feed
+        // has had to drop off the front.
+        self.history.feed(run_id, &item);
         self.emit(EngineEvent::RunOutput {
             run_id: run_id.to_string(),
             item,
@@ -602,6 +654,7 @@ impl Engine {
             }
         };
         if let Some(run) = updated {
+            self.history.record(&run);
             self.publish(&run).await;
         }
     }
@@ -771,5 +824,161 @@ impl Engine {
             tokio::time::sleep(interval).await;
             self.tick_auto().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "heretic-engine-{name}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A run as it would have been journalled mid-flight.
+    fn a_run_in_flight(id: &str) -> RunRecord {
+        RunRecord {
+            id: id.into(),
+            project_id: "proj1".into(),
+            project_name: "Heretic".into(),
+            task_id: "task1".into(),
+            task_title: "Persist run history".into(),
+            epic_title: "Storage".into(),
+            status: RunStatus::Running,
+            stage: RunStage::Implementing,
+            agent: Some("Claude Code · Implementer".into()),
+            started_at: "2026-08-24T10:00:00Z".into(),
+            finished_at: None,
+            revisions: 0,
+            branch: Some("heretic/task1".into()),
+            base_branch: Some("main".into()),
+            worktree_path: Some("/tmp/worktree".into()),
+            landing: Landing::Nothing,
+            changes: ChangeSummary::default(),
+            result: None,
+            stats: Vec::new(),
+            feed: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn runs_come_back_after_a_restart() {
+        let dir = TempDir::new("restart");
+        let run = a_run_in_flight("run-1");
+
+        {
+            let history = RunHistory::new(&dir.0);
+            history.record(&run);
+            history.feed(
+                &run.id,
+                &RunFeedItem {
+                    stage: RunStage::Implementing,
+                    role: Some(Role::Implementer),
+                    event: AgentEvent::Text {
+                        text: "editing store.rs".into(),
+                    },
+                },
+            );
+        }
+
+        let engine =
+            Engine::with_history(Settings::with_starter_profiles(), RunHistory::new(&dir.0));
+        let runs = engine.runs().await;
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].id, "run-1");
+        assert_eq!(runs[0].task_title, "Persist run history");
+        assert_eq!(runs[0].feed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_run_cut_short_by_a_restart_asks_for_attention() {
+        let dir = TempDir::new("interrupted");
+
+        let history = RunHistory::new(&dir.0);
+        history.record(&a_run_in_flight("run-1"));
+
+        let engine =
+            Engine::with_history(Settings::with_starter_profiles(), RunHistory::new(&dir.0));
+        let runs = engine.runs().await;
+
+        assert_eq!(runs[0].status, RunStatus::NeedsAttention);
+        assert!(matches!(
+            runs[0].result,
+            Some(RunResult::NeedsAttention { .. })
+        ));
+        assert!(runs[0].finished_at.is_some());
+        // Its worktree is still on disk, so the record has to offer the way out.
+        assert_eq!(runs[0].landing, Landing::OnBranch);
+
+        // And the verdict was written down, so the next start agrees with it
+        // rather than deciding all over again.
+        let reloaded = RunHistory::new(&dir.0).load();
+        assert_eq!(reloaded[0].status, RunStatus::NeedsAttention);
+        assert_eq!(reloaded[0].finished_at, runs[0].finished_at);
+    }
+
+    #[tokio::test]
+    async fn a_run_that_finished_before_the_restart_is_left_alone() {
+        let dir = TempDir::new("finished");
+
+        let mut run = a_run_in_flight("run-1");
+        run.status = RunStatus::Succeeded;
+        run.result = Some(RunResult::Completed);
+        run.finished_at = Some("2026-08-24T10:30:00Z".into());
+        run.landing = Landing::Merged;
+        RunHistory::new(&dir.0).record(&run);
+
+        let engine =
+            Engine::with_history(Settings::with_starter_profiles(), RunHistory::new(&dir.0));
+        let runs = engine.runs().await;
+
+        assert_eq!(runs[0].status, RunStatus::Succeeded);
+        assert_eq!(runs[0].landing, Landing::Merged);
+        assert_eq!(runs[0].finished_at.as_deref(), Some("2026-08-24T10:30:00Z"));
+    }
+
+    #[tokio::test]
+    async fn dismissing_a_run_forgets_it_for_good() {
+        let dir = TempDir::new("dismiss");
+
+        let mut run = a_run_in_flight("run-1");
+        run.status = RunStatus::Succeeded;
+        run.result = Some(RunResult::Completed);
+        RunHistory::new(&dir.0).record(&run);
+
+        let engine =
+            Engine::with_history(Settings::with_starter_profiles(), RunHistory::new(&dir.0));
+        assert!(engine.dismiss_run("run-1").await);
+        assert!(engine.runs().await.is_empty());
+
+        let restarted =
+            Engine::with_history(Settings::with_starter_profiles(), RunHistory::new(&dir.0));
+        assert!(restarted.runs().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_engine_without_history_starts_empty_and_writes_nothing() {
+        let dir = TempDir::new("disabled");
+        RunHistory::new(&dir.0).record(&a_run_in_flight("run-1"));
+
+        let engine = Engine::new(Settings::with_starter_profiles());
+        assert!(engine.runs().await.is_empty());
     }
 }

@@ -8,12 +8,12 @@ use crate::config::{ModelProfile, Role};
 use crate::model::TaskStatus;
 use crate::runner::{AgentEvent, AgentOutcome, CancelToken, ModelTokenUsage, TokenUsage};
 use crate::worktree::ChangeSummary;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::sync::mpsc;
 
 /// Which part of the pipeline is happening.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStage {
     /// Setting up the worktree and claiming the task on the board.
@@ -51,7 +51,7 @@ impl RunStage {
 }
 
 /// How a run ended.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunResult {
     /// Implemented, reviewed and integrated.
@@ -84,7 +84,7 @@ impl RunResult {
 }
 
 /// Live status of a run, as the UI sees it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
     Queued,
@@ -96,9 +96,10 @@ pub enum RunStatus {
 }
 
 /// One entry in a run's activity feed.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunFeedItem {
     pub stage: RunStage,
+    #[serde(default)]
     pub role: Option<Role>,
     pub event: AgentEvent,
 }
@@ -107,18 +108,24 @@ pub struct RunFeedItem {
 ///
 /// A run collects one of these per stage — including each trip round the
 /// review loop — so the finished run can show where the tokens went.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StageStats {
     pub stage: RunStage,
+    #[serde(default)]
     pub role: Option<Role>,
     /// The profile that ran, as shown in the feed ("Claude Code · Reviewer").
+    #[serde(default)]
     pub agent: Option<String>,
     /// Wall-clock time of the agent process.
+    #[serde(default)]
     pub duration_ms: u64,
+    #[serde(default)]
     pub usage: TokenUsage,
+    #[serde(default)]
     pub cost_usd: Option<f64>,
     /// Per-model breakdown when the backend reports one; otherwise a single
     /// entry under the profile's configured model.
+    #[serde(default)]
     pub models: Vec<ModelTokenUsage>,
 }
 
@@ -175,32 +182,52 @@ pub struct RunOutcome {
 }
 
 /// A run as stored and shown in the UI.
-#[derive(Debug, Clone, Serialize)]
+///
+/// This is also what a run's history journal replays, so every field that is
+/// not needed to identify the run is optional on the way in: a record written
+/// by an earlier build should come back as a slightly emptier run, never as a
+/// parse error that loses it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunRecord {
     pub id: String,
     pub project_id: String,
+    #[serde(default)]
     pub project_name: String,
     pub task_id: String,
+    #[serde(default)]
     pub task_title: String,
+    #[serde(default)]
     pub epic_title: String,
     pub status: RunStatus,
     pub stage: RunStage,
     /// Agent currently working, for the header of the run panel.
+    #[serde(default)]
     pub agent: Option<String>,
     pub started_at: String,
+    #[serde(default)]
     pub finished_at: Option<String>,
+    #[serde(default)]
     pub revisions: u32,
+    #[serde(default)]
     pub branch: Option<String>,
     /// The branch the work forked from, and would merge back into.
+    #[serde(default)]
     pub base_branch: Option<String>,
+    #[serde(default)]
     pub worktree_path: Option<String>,
     /// What has become of the work since the agents finished.
+    #[serde(default)]
     pub landing: Landing,
+    #[serde(default)]
     pub changes: ChangeSummary,
+    #[serde(default)]
     pub result: Option<RunResult>,
     /// Tokens, time and spend per agent stage, in the order the stages ran.
+    #[serde(default)]
     pub stats: Vec<StageStats>,
-    /// Capped activity feed — the full transcript lives on disk.
+    /// Capped activity feed. The full transcript lives on disk, in the run's
+    /// history journal, and is replayed into this on the way back in.
+    #[serde(default)]
     pub feed: Vec<RunFeedItem>,
 }
 
@@ -224,10 +251,11 @@ impl RunRecord {
 ///
 /// A run that finishes is not the end of the story: unless the project merges
 /// automatically, the work sits on its own branch waiting for a decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Landing {
     /// Nothing to land — the run made no changes, or worked in place.
+    #[default]
     Nothing,
     /// Committed to its branch, waiting to be merged or discarded.
     OnBranch,

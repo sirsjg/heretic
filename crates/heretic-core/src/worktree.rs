@@ -38,7 +38,8 @@ pub struct Worktree {
 }
 
 /// What changed in a worktree.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ChangeSummary {
     pub files_changed: usize,
     pub insertions: usize,

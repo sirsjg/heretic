@@ -5,7 +5,7 @@
 //! doing. Anything we do not recognise is passed through untouched rather than
 //! dropped, so no output is ever silently lost.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// How a backend prints its progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -20,7 +20,8 @@ pub enum OutputFormat {
 
 /// Token counts reported by a backend. Cached tokens are kept apart from fresh
 /// input: they cost a fraction of the price and would otherwise dwarf it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -46,7 +47,7 @@ impl TokenUsage {
 }
 
 /// One model's share of a run, when the backend breaks usage down per model.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelTokenUsage {
     pub model: String,
     pub usage: TokenUsage,
@@ -54,7 +55,7 @@ pub struct ModelTokenUsage {
 }
 
 /// A single item in a run's activity feed.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
     /// Prose the agent produced.
@@ -79,12 +80,21 @@ pub enum AgentEvent {
     /// notes arriving back.
     Prompt { text: String },
     /// The agent's closing summary, emitted once at the end of a run.
+    ///
+    /// Every field past `is_error` defaults on the way in: these are replayed
+    /// from run history written by an earlier build, which may not have had
+    /// them.
     Result {
+        #[serde(default)]
         text: Option<String>,
         is_error: bool,
+        #[serde(default)]
         duration_ms: Option<u64>,
+        #[serde(default)]
         cost_usd: Option<f64>,
+        #[serde(default)]
         usage: Option<TokenUsage>,
+        #[serde(default)]
         model_usage: Vec<ModelTokenUsage>,
     },
 }
