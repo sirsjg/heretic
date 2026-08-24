@@ -27,6 +27,30 @@ import {
   IconRefresh,
 } from "../components/icons";
 
+/**
+ * The harnesses that can drive a model on a host of your own. Both take an
+ * OpenAI-compatible endpoint, so a discovered model can be handed to whichever
+ * of them is installed.
+ */
+type LocalHarness = "codex_oss" | "opencode";
+
+const HARNESS_LABELS: Record<LocalHarness, string> = {
+  codex_oss: "Codex",
+  opencode: "OpenCode",
+};
+
+/** The profile kind a detected CLI is added as. */
+function runnerForCli(program: string): RunnerKind {
+  switch (program) {
+    case "claude":
+      return { kind: "claude_code" };
+    case "opencode":
+      return { kind: "opencode", base_url: null };
+    default:
+      return { kind: "codex" };
+  }
+}
+
 export function DetectPanel({
   profiles,
   onAddProfile,
@@ -55,37 +79,59 @@ export function DetectPanel({
     void scan();
   }, [scan]);
 
-  /** Whether a profile already points at this model on this host. */
-  function alreadyAdded(model: string, baseUrl: string): boolean {
+  // Which harnesses are here to drive a local model. With neither installed
+  // Codex is still offered, so a profile can be set up ahead of the CLI.
+  const found = new Set(
+    (environment?.clis ?? []).filter((cli) => cli.found).map((cli) => cli.program),
+  );
+  const harnesses: LocalHarness[] = [
+    ...(found.has("codex") ? (["codex_oss"] as const) : []),
+    ...(found.has("opencode") ? (["opencode"] as const) : []),
+  ];
+  if (harnesses.length === 0) harnesses.push("codex_oss");
+
+  /** Whether a profile already drives this model on this host through `harness`. */
+  function alreadyAdded(
+    model: string,
+    baseUrl: string,
+    harness: LocalHarness,
+  ): boolean {
     return profiles.some(
       (profile) =>
         profile.model === model &&
-        profile.runner.kind === "codex_oss" &&
+        profile.runner.kind === harness &&
         (profile.runner.base_url ?? "").startsWith(
           baseUrl.replace(/\/+$/, ""),
         ),
     );
   }
 
-  async function addModel(host: HostProbe, model: DiscoveredModel) {
+  async function addModel(
+    host: HostProbe,
+    model: DiscoveredModel,
+    harness: LocalHarness,
+  ) {
     setAdding(true);
     try {
       const base = await api.openaiBase(host.host.base_url);
-      const runner: RunnerKind = { kind: "codex_oss", base_url: base };
+      const runner: RunnerKind = { kind: harness, base_url: base };
       onAddProfile({
-        id: `${host.host.id}-${model.id}`.replace(/[^a-zA-Z0-9-]/g, "-"),
-        name: `${model.id} (${host.host.name})`,
+        // The same model on the same host can be driven by either harness, so
+        // the id has to tell them apart.
+        id: `${host.host.id}-${model.id}${harness === "opencode" ? "-opencode" : ""}`
+          .replace(/[^a-zA-Z0-9-]/g, "-"),
+        name: `${model.id} · ${HARNESS_LABELS[harness]} (${host.host.name})`,
         runner,
         model: model.id,
         extra_args: [],
         env: {},
         timeout_secs: 5400,
-        // Carry the real window through: without it Codex falls back to a
+        // Carry the real window through: without it the harness falls back to a
         // conservative guess and wastes most of a large context.
         context_window: model.context_length ?? null,
         autonomous: true,
       });
-      onNotify("info", `Added ${model.id}.`);
+      onNotify("info", `Added ${model.id} through ${HARNESS_LABELS[harness]}.`);
     } catch (error) {
       onNotify("error", String(error));
     } finally {
@@ -94,8 +140,7 @@ export function DetectPanel({
   }
 
   function addCli(cli: CliStatus) {
-    const runner: RunnerKind =
-      cli.program === "claude" ? { kind: "claude_code" } : { kind: "codex" };
+    const runner = runnerForCli(cli.program);
     onAddProfile({
       id: cli.program,
       name: cli.label,
@@ -143,10 +188,13 @@ export function DetectPanel({
                 <CliRow
                   key={cli.program}
                   cli={cli}
-                  added={profiles.some(
-                    (p) =>
-                      (cli.program === "claude" && p.runner.kind === "claude_code") ||
-                      (cli.program === "codex" && p.runner.kind === "codex"),
+                  // An OpenCode profile bound to a host is a different thing
+                  // from OpenCode driving its own providers, which is what
+                  // this row adds.
+                  added={profiles.some((p) =>
+                    cli.program === "opencode"
+                      ? p.runner.kind === "opencode" && !p.runner.base_url
+                      : p.runner.kind === runnerForCli(cli.program).kind,
                   )}
                   onAdd={() => addCli(cli)}
                 />
@@ -164,8 +212,13 @@ export function DetectPanel({
                   key={probe.host.id}
                   probe={probe}
                   busy={adding}
-                  isAdded={(model) => alreadyAdded(model, probe.host.base_url)}
-                  onAddModel={(model) => void addModel(probe, model)}
+                  harnesses={harnesses}
+                  isAdded={(model, harness) =>
+                    alreadyAdded(model, probe.host.base_url, harness)
+                  }
+                  onAddModel={(model, harness) =>
+                    void addModel(probe, model, harness)
+                  }
                   onRemove={
                     probe.host.id === "local-ollama"
                       ? undefined
@@ -229,14 +282,16 @@ function CliRow({
 function HostBlock({
   probe,
   busy,
+  harnesses,
   isAdded,
   onAddModel,
   onRemove,
 }: {
   probe: HostProbe;
   busy: boolean;
-  isAdded: (model: string) => boolean;
-  onAddModel: (model: DiscoveredModel) => void;
+  harnesses: LocalHarness[];
+  isAdded: (model: string, harness: LocalHarness) => boolean;
+  onAddModel: (model: DiscoveredModel, harness: LocalHarness) => void;
   onRemove?: () => void;
 }) {
   const [open, setOpen] = useState(true);
@@ -293,35 +348,44 @@ function HostBlock({
 
       {open && probe.models.length > 0 && (
         <ul className="border-t">
-          {probe.models.map((model) => {
-            const added = isAdded(model.id);
-            return (
-              <li
-                key={model.id}
-                className="flex items-center gap-2.5 border-b px-3 py-1.5 last:border-b-0"
-              >
-                <IconModels className="size-3.5 shrink-0 text-[var(--text-faint)]" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-mono text-[11.5px]">{model.id}</p>
-                  {describeModel(model) && (
-                    <p className="truncate text-[10.5px] text-[var(--text-faint)]">
-                      {describeModel(model)}
-                    </p>
-                  )}
-                </div>
-                {added ? (
-                  <Badge tone="success">
+          {probe.models.map((model) => (
+            <li
+              key={model.id}
+              className="flex items-center gap-2.5 border-b px-3 py-1.5 last:border-b-0"
+            >
+              <IconModels className="size-3.5 shrink-0 text-[var(--text-faint)]" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-mono text-[11.5px]">{model.id}</p>
+                {describeModel(model) && (
+                  <p className="truncate text-[10.5px] text-[var(--text-faint)]">
+                    {describeModel(model)}
+                  </p>
+                )}
+              </div>
+
+              {/* A model needs a harness to drive it; with more than one
+                  installed, the button says which. */}
+              {harnesses.map((harness) =>
+                isAdded(model.id, harness) ? (
+                  <Badge key={harness} tone="success">
                     <IconCheck className="size-3" />
-                    Added
+                    {harnesses.length > 1 ? HARNESS_LABELS[harness] : "Added"}
                   </Badge>
                 ) : (
-                  <Button size="sm" disabled={busy} onClick={() => onAddModel(model)}>
-                    Add
+                  <Button
+                    key={harness}
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => onAddModel(model, harness)}
+                  >
+                    {harnesses.length > 1
+                      ? `Add · ${HARNESS_LABELS[harness]}`
+                      : "Add"}
                   </Button>
-                )}
-              </li>
-            );
-          })}
+                ),
+              )}
+            </li>
+          ))}
         </ul>
       )}
 

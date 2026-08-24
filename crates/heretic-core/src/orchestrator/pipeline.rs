@@ -476,8 +476,11 @@ async fn run_stage(
 /// Fold a stage's transcript into token, time and spend figures.
 ///
 /// Claude reports totals (and a per-model split) on its final `result` line;
-/// Codex reports per-turn `Usage` events that are summed here. The two never
-/// coexist in one transcript, so adding both cannot double-count.
+/// Codex and opencode report per-turn `Usage` events that are summed here. The
+/// two never coexist in one transcript, so adding both cannot double-count.
+///
+/// Spend follows the same split: a `result` carries the run's total and
+/// replaces whatever is held, while per-turn costs accumulate.
 fn stage_stats(
     stage: RunStage,
     role: Role,
@@ -490,7 +493,15 @@ fn stage_stats(
 
     for event in &outcome.transcript {
         match event {
-            AgentEvent::Usage { usage: turn } => usage.add(turn),
+            AgentEvent::Usage {
+                usage: turn,
+                cost_usd: turn_cost,
+            } => {
+                usage.add(turn);
+                if let Some(turn_cost) = turn_cost {
+                    cost_usd = Some(cost_usd.unwrap_or(0.0) + turn_cost);
+                }
+            }
             AgentEvent::Result {
                 usage: totals,
                 cost_usd: cost,
@@ -690,6 +701,7 @@ impl ModelProfile {
             crate::config::RunnerKind::Codex | crate::config::RunnerKind::CodexOss { .. } => {
                 "codex".into()
             }
+            crate::config::RunnerKind::OpenCode { .. } => "opencode".into(),
             crate::config::RunnerKind::Custom { command, .. } => command.clone(),
         }
     }

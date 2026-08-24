@@ -37,7 +37,7 @@ Heretic is the replacement. Same premise, different machine underneath:
 |---|---|---|
 | Interface | Terminal UI | Desktop app (macOS, Linux) |
 | Per task | One agent, one pass | A team — plan → implement → review → document |
-| Models | Claude Code only | Any mix: Claude Code, Codex, local models, custom CLIs |
+| Models | Claude Code only | Any mix: Claude Code, Codex, OpenCode, local models, custom CLIs |
 | Review | None | A reviewer that can send work back with notes |
 | Isolation | Shared checkout | A `git worktree` per task, on its own branch |
 | Landing the work | Committed in place | Merge or discard from the app, on your terms |
@@ -132,6 +132,8 @@ An unreadable review verdict is never treated as approval.
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `claude`
   - [Codex](https://github.com/openai/codex) — `codex`, including `--oss` mode
     for local models through [Ollama](https://ollama.com)
+  - [OpenCode](https://opencode.ai) — `opencode`, against its own providers or
+    a model server of your own
   - or any other agent CLI, described as a custom command
 - **git**, and a repository for each project you want worked.
 
@@ -254,15 +256,17 @@ pnpm tauri icon crates/heretic-app/icons/icon-1024.png
 
 **Models & roles → What's available** scans for:
 
-- **Agent CLIs** on this machine — Claude Code and Codex, with their versions.
-  Anything missing says so, and why.
+- **Agent CLIs** on this machine — Claude Code, Codex and OpenCode, with their
+  versions. Anything missing says so, and why.
 - **Model hosts** — every configured machine is asked what weights it is
   holding. Ollama is read through its native API, so parameter counts,
   quantisation and sizes come through; anything OpenAI-shaped (vLLM, LM Studio,
   llama.cpp, NIM) is read from `/v1/models`.
 
-Anything found becomes a profile in one click. Anything not found can still be
-added by hand — detection is a convenience, not a gate.
+Anything found becomes a profile in one click. Where both Codex and OpenCode
+are installed, a discovered model offers one button each — the same weights,
+driven by either harness. Anything not found can still be added by hand —
+detection is a convenience, not a gate.
 
 ### Using another machine's models
 
@@ -290,16 +294,20 @@ concurrently, so one machine that is asleep does not hold up the rest.
 
 ### Running a local model
 
-Local models need a coding harness to actually edit files; Heretic drives
-them through Codex's open-model mode:
+Local models need a coding harness to actually edit files. Heretic drives them
+through Codex's open-model mode or through OpenCode, whichever you have:
 
 ```bash
 ollama pull qwen3-coder:30b
 ```
 
-Adding a model from the scan sets this up for you. By hand: set a profile's
-runner to **Codex — local model (Ollama)** and its model to `qwen3-coder:30b`.
-The endpoint defaults to `http://localhost:11434/v1`.
+Adding a model from the scan sets this up for you — press the button for the
+harness you want. By hand: set a profile's runner to **Codex — local model
+(Ollama)** or **OpenCode**, and its model to `qwen3-coder:30b`. Codex defaults
+to `http://localhost:11434/v1`; OpenCode with no endpoint uses the providers
+it is already configured with, so give it one to reach a host.
+
+#### Through Codex
 
 **Codex needs Ollama 0.13.4 or newer.** Anything older is refused outright, so
 the scan checks each host's version and says so before you hit it mid-run.
@@ -337,6 +345,39 @@ codex exec --json --sandbox workspace-write \
 
 Current Codex accepts only the `responses` wire format from a custom provider,
 which recent Ollama serves at `/v1/responses`.
+
+#### Through OpenCode
+
+OpenCode reads its providers from a configuration file and takes no endpoint
+flag, so Heretic writes the provider it needs into `OPENCODE_CONFIG_CONTENT`
+for the run. Your own `opencode.json` is never touched, and a profile with no
+endpoint is left to use it as-is.
+
+```bash
+OPENCODE_CONFIG_CONTENT='{"provider":{"heretic-host":{
+  "npm":"@ai-sdk/openai-compatible",
+  "options":{"baseURL":"http://spark.local:11434/v1","apiKey":"heretic"},
+  "models":{"<model>":{"limit":{"context":262144,"output":32768}}}}}}' \
+opencode run --format json --auto -m heretic-host/<model> "<brief>"
+```
+
+The model keeps its own id inside the `heretic-host/` prefix, so a
+slash-bearing id such as `Qwen/Qwen3-Coder-30B` works. The `limit` is the
+context window the host reported, passed on rather than guessed at; OpenCode
+wants an output ceiling alongside it and reserves that much of the window for
+the reply. The API key is a placeholder — local servers ignore it, but the
+OpenAI-compatible provider will not start without one.
+
+Against OpenCode's own providers there is no generated configuration, and the
+model is written the way OpenCode writes it — `provider/model`. `opencode
+models` lists what yours are set up with.
+
+```bash
+opencode run --format json --auto -m anthropic/claude-opus-5 "<brief>"
+```
+
+Unlike Codex, OpenCode prices each step as it goes, so a run's spend is summed
+from its steps rather than read off a closing total.
 
 ### Custom agent CLIs
 

@@ -66,6 +66,22 @@ pub enum RunnerKind {
         #[serde(default)]
         base_url: Option<String>,
     },
+    /// The OpenCode CLI.
+    ///
+    /// One variant covers both cases, because OpenCode has no separate
+    /// local-model mode: with no `base_url` it uses whatever providers its own
+    /// configuration sets up, and with one it is handed a provider pointing at
+    /// that host.
+    ///
+    /// Named explicitly: `rename_all` would spell this `open_code`, which is
+    /// neither what the CLI is called nor what the UI sends.
+    #[serde(rename = "opencode")]
+    OpenCode {
+        /// An OpenAI-compatible endpoint to drive instead of OpenCode's own
+        /// providers. `None` leaves the user's OpenCode configuration alone.
+        #[serde(default)]
+        base_url: Option<String>,
+    },
     /// Any other agent CLI, described by a command template.
     ///
     /// `{{prompt}}` in an argument is replaced with the generated prompt; if no
@@ -84,6 +100,8 @@ impl RunnerKind {
             RunnerKind::ClaudeCode => "Claude Code",
             RunnerKind::Codex => "Codex",
             RunnerKind::CodexOss { .. } => "Codex (local)",
+            RunnerKind::OpenCode { base_url: None } => "OpenCode",
+            RunnerKind::OpenCode { .. } => "OpenCode (local)",
             RunnerKind::Custom { command, .. } => command,
         }
     }
@@ -400,5 +418,54 @@ impl Settings {
         }
 
         problems
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tag each runner is written under, in settings on disk and across the
+    /// bridge to the UI. These strings are duplicated in `ui/src/lib/types.ts`,
+    /// so a variant renamed on one side without the other is rejected by the
+    /// command layer rather than by anything a user can act on.
+    #[test]
+    fn every_runner_keeps_the_tag_the_ui_sends() {
+        let cases = [
+            (RunnerKind::ClaudeCode, "claude_code"),
+            (RunnerKind::Codex, "codex"),
+            (RunnerKind::CodexOss { base_url: None }, "codex_oss"),
+            (RunnerKind::OpenCode { base_url: None }, "opencode"),
+            (
+                RunnerKind::Custom {
+                    command: "aider".into(),
+                    args: Vec::new(),
+                },
+                "custom",
+            ),
+        ];
+
+        for (runner, tag) in cases {
+            let json = serde_json::to_value(&runner).expect("runner should serialise");
+            assert_eq!(json["kind"], tag, "wrong tag for {runner:?}");
+
+            let parsed: RunnerKind =
+                serde_json::from_value(json).expect("runner should round-trip");
+            assert_eq!(parsed, runner);
+        }
+    }
+
+    #[test]
+    fn a_runner_the_ui_sends_is_accepted_verbatim() {
+        // Exactly what the UI puts on the wire when a host is bound.
+        let runner: RunnerKind =
+            serde_json::from_str(r#"{"kind":"opencode","base_url":"http://localhost:11434/v1"}"#)
+                .expect("the UI's opencode runner should parse");
+        assert_eq!(
+            runner,
+            RunnerKind::OpenCode {
+                base_url: Some("http://localhost:11434/v1".into())
+            }
+        );
     }
 }
