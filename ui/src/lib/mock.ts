@@ -283,9 +283,11 @@ function ineligibility(t: Task, epics: Epic[]): string | null {
 }
 
 const RUN_SCRIPT: RunFeedItem[] = [
+  { stage: "planning", role: "orchestrator", event: { type: "prompt", text: "You are the orchestrator on an autonomous engineering team. Another agent will implement this task from your brief.\n\n## The task\n\n- Project: Corporate Travel\n- Task T-104: Build the knowledge base\n\n### Acceptance criteria\n\n- [ ] Every ADR follows MADR\n- [ ] CI fails when core packages change without docs" } },
   { stage: "planning", role: "orchestrator", event: { type: "text", text: "Reading the repository to work out where documentation should live." } },
   { stage: "planning", role: "orchestrator", event: { type: "tool", name: "Glob", detail: "docs/**/*.md" } },
   { stage: "planning", role: "orchestrator", event: { type: "text", text: "Brief: create docs/README.md as an index, seed 15 ADRs using MADR, and add a CI check that fails when core packages change without docs." } },
+  { stage: "implementing", role: "implementer", event: { type: "prompt", text: "You are implementing one task end to end in this repository.\n\n## Implementation brief\n\nThe orchestrator prepared this plan. Follow it unless you find it to be wrong.\n\nCreate docs/README.md as an index, seed 15 ADRs using MADR, and add a CI check that fails when core packages change without docs." } },
   { stage: "implementing", role: "implementer", event: { type: "text", text: "Starting on the knowledge base." } },
   { stage: "implementing", role: "implementer", event: { type: "tool", name: "Write", detail: "AGENTS.md" } },
   { stage: "implementing", role: "implementer", event: { type: "tool", name: "Write", detail: "docs/README.md" } },
@@ -296,6 +298,7 @@ const RUN_SCRIPT: RunFeedItem[] = [
   { stage: "reviewing", role: "reviewer", event: { type: "tool", name: "Read", detail: "docs/adr/0008-llm-gateway.md" } },
   { stage: "reviewing", role: "reviewer", event: { type: "text", text: "ADR 0008 has no Consequences section, which guardrail 999 requires." } },
   { stage: "reviewing", role: "reviewer", event: { type: "result", text: "Two ADRs are missing Consequences.\n\nVERDICT: request_changes", is_error: false, duration_ms: 41000, cost_usd: 0.09 } },
+  { stage: "implementing", role: "implementer", event: { type: "prompt", text: "You are implementing one task end to end in this repository.\n\n## Changes requested by review\n\nYour previous attempt was reviewed and sent back. Address every point below; do not start over.\n\nTwo ADRs are missing Consequences: docs/adr/0008-llm-gateway.md and docs/adr/0012-queueing.md." } },
   { stage: "implementing", role: "implementer", event: { type: "text", text: "Adding the missing Consequences sections." } },
   { stage: "implementing", role: "implementer", event: { type: "tool", name: "Edit", detail: "docs/adr/0008-llm-gateway.md" } },
   { stage: "implementing", role: "implementer", event: { type: "result", text: "Both ADRs now document their consequences.", is_error: false, duration_ms: 52000, cost_usd: null } },

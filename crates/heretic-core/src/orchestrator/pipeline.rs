@@ -378,6 +378,16 @@ async fn run_stage(
         })
         .await;
 
+    // The command line hides the prompt behind `'<prompt>'`; this is the prompt
+    // itself, which is the only record of what one stage actually handed the next.
+    let _ = progress
+        .send(RunProgress::Prompt {
+            stage,
+            role: Some(role),
+            text: prompt_text.to_string(),
+        })
+        .await;
+
     // Forward the agent's events into the run feed as they arrive.
     let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
     let feed = progress.clone();
@@ -1575,6 +1585,65 @@ mod tests {
         assert_eq!(commands.len(), 1, "{commands:?}");
         assert!(commands[0].starts_with("claude "), "{}", commands[0]);
         assert!(commands[0].contains("'<prompt>'"), "{}", commands[0]);
+    }
+
+    #[tokio::test]
+    async fn every_stage_records_the_prompt_it_was_given() {
+        let board = FakeBoard::default();
+        let workspace = FakeWorkspace::with_changes();
+        let executor = ScriptedExecutor::with(
+            Role::Orchestrator,
+            vec![StageScript::Says("Edit src/limiter.rs.".into())],
+        )
+        .and(Role::Implementer, vec![StageScript::Says("done".into())])
+        .and(
+            Role::Reviewer,
+            vec![StageScript::Says("VERDICT: approve".into())],
+        );
+
+        let pipeline = Pipeline {
+            plan: true,
+            ..Pipeline::default()
+        };
+        let (_, progress) = run(
+            config(
+                pipeline,
+                &[Role::Orchestrator, Role::Implementer, Role::Reviewer],
+            ),
+            &board,
+            &workspace,
+            &executor,
+            CancelToken::new(),
+        )
+        .await;
+
+        let prompts: Vec<(RunStage, &String)> = progress
+            .iter()
+            .filter_map(|p| match p {
+                RunProgress::Prompt { stage, text, .. } => Some((*stage, text)),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            prompts.iter().map(|(stage, _)| *stage).collect::<Vec<_>>(),
+            vec![
+                RunStage::Planning,
+                RunStage::Implementing,
+                RunStage::Reviewing
+            ]
+        );
+
+        // The point of recording these is the hand-off: what one stage produced
+        // has to be visible arriving at the next.
+        assert!(
+            prompts[1].1.contains("Edit src/limiter.rs."),
+            "the implementer's prompt must carry the planner's brief"
+        );
+        assert!(
+            prompts[2].1.contains("diff --git"),
+            "the reviewer's prompt must carry the diff"
+        );
     }
 
     #[tokio::test]

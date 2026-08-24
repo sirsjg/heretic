@@ -85,6 +85,16 @@ are starting today, start with Heretic.
           status + comment└──────────────────┘
 ```
 
+### Seeing what one agent told the next
+
+Each stage is a hand-off: the planner's brief goes to the implementer, the diff
+and the reviewer's notes come back to it. Heretic writes those prompts, not the
+agents, so the run feed records each one under a **Generated prompt** tag,
+folded away until you open it. That is where you read what the implementer was
+actually asked to do, or which of the reviewer's points made it into the
+revision — the command line logged beside it deliberately shows `'<prompt>'`
+instead, so the flags stay legible.
+
 ### What happens to the work
 
 A finished run leaves its commits on its own branch, in its own worktree. What

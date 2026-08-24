@@ -13,6 +13,7 @@ import { RunStats } from "../components/RunStats";
 import {
   IconBranch,
   IconCheck,
+  IconChevron,
   IconClock,
   IconClose,
   IconFolder,
@@ -528,6 +529,10 @@ function FeedRow({
     );
   }
 
+  if (event.type === "prompt") {
+    return <PromptBlock stage={stage} text={event.text} />;
+  }
+
   if (event.type === "result") {
     const verdict = readVerdict(event.text ?? "");
     return (
@@ -578,6 +583,56 @@ function FeedRow({
         {text}
       </p>
       <Repeats count={repeats} />
+    </div>
+  );
+}
+
+/**
+ * The prompt Heretic built for a stage, folded away until asked for.
+ *
+ * This is the hand-off made visible — the planner's brief reaching the
+ * implementer, the diff and the review notes reaching it back — and it is the
+ * one thing the command line above it deliberately hides. Collapsed by default
+ * because a reviewer prompt carries the whole diff and would bury the run.
+ */
+function PromptBlock({ stage, text }: { stage: RunStage; text: string }) {
+  const [open, setOpen] = useState(false);
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+
+  return (
+    <div
+      className="enter my-1 rounded-lg border"
+      style={{ background: "var(--surface-2)" }}
+    >
+      <button
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
+        title={open ? "Hide the prompt" : "Show the prompt this stage was given"}
+      >
+        <StageTag label={STAGE_LABELS[stage]} />
+        <Badge tone="neutral">Generated prompt</Badge>
+        <span className="text-[11px] text-[var(--text-faint)]">
+          {words.toLocaleString()} words
+        </span>
+        <IconChevron
+          className="ml-auto size-3.5 shrink-0 text-[var(--text-faint)] transition-transform"
+          style={{ transform: open ? "rotate(90deg)" : undefined }}
+        />
+      </button>
+
+      {open && (
+        <div className="border-t px-3 py-2">
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-[var(--text-muted)]">
+            {text}
+          </pre>
+          <button
+            onClick={() => void navigator.clipboard.writeText(text)}
+            className="mt-1.5 text-[11px] text-[var(--text-faint)] hover:text-[var(--text)]"
+          >
+            Copy
+          </button>
+        </div>
+      )}
     </div>
   );
 }

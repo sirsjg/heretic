@@ -71,6 +71,13 @@ pub enum AgentEvent {
     /// Token accounting from the backend. Bookkeeping, not conversation: it is
     /// folded into the run's stats and never shown in the feed.
     Usage { usage: TokenUsage },
+    /// The prompt Heretic generated for a stage and handed to the agent.
+    ///
+    /// Not something an agent said — it is what the earlier stages produced,
+    /// made visible so a run can be read as the hand-off it actually is: the
+    /// planner's brief arriving at the implementer, the diff and the reviewer's
+    /// notes arriving back.
+    Prompt { text: String },
     /// The agent's closing summary, emitted once at the end of a run.
     Result {
         text: Option<String>,
@@ -94,6 +101,9 @@ impl AgentEvent {
             AgentEvent::Raw { text } => text.clone(),
             AgentEvent::Error { message } => format!("Error: {message}"),
             AgentEvent::Usage { .. } => String::new(),
+            // A prompt can be thousands of words. It belongs in the feed, where
+            // it can be unfolded on demand, never in a tail or a Flux comment.
+            AgentEvent::Prompt { .. } => String::new(),
             AgentEvent::Result { text, .. } => text.clone().unwrap_or_default(),
         }
     }

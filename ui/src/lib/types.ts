@@ -269,6 +269,8 @@ export type AgentEvent =
   | { type: "raw"; text: string }
   | { type: "error"; message: string }
   | { type: "usage"; usage: TokenUsage }
+  /** The prompt Heretic generated for a stage and handed to the agent. */
+  | { type: "prompt"; text: string }
   | {
       type: "result";
       text?: string | null;

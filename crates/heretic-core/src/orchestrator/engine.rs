@@ -525,66 +525,69 @@ impl Engine {
                 })
                 .await;
             }
-            RunProgress::Output(item) => {
-                {
-                    let mut runs = self.runs.write().await;
-                    if let Some(run) = runs.get_mut(run_id) {
-                        run.push_feed(item.clone());
-                    }
-                }
-                self.emit(EngineEvent::RunOutput {
-                    run_id: run_id.to_string(),
-                    item,
-                });
-            }
+            RunProgress::Output(item) => self.push_feed(run_id, item).await,
             RunProgress::RevisionRequested { attempt, .. } => {
                 self.update(run_id, |run| run.revisions = attempt).await;
             }
             RunProgress::Command { stage, command } => {
-                let item = RunFeedItem {
-                    stage,
-                    role: None,
-                    event: AgentEvent::Raw {
-                        text: format!("$ {command}"),
+                self.push_feed(
+                    run_id,
+                    RunFeedItem {
+                        stage,
+                        role: None,
+                        event: AgentEvent::Raw {
+                            text: format!("$ {command}"),
+                        },
                     },
-                };
-                {
-                    let mut runs = self.runs.write().await;
-                    if let Some(run) = runs.get_mut(run_id) {
-                        run.push_feed(item.clone());
-                    }
-                }
-                self.emit(EngineEvent::RunOutput {
-                    run_id: run_id.to_string(),
-                    item,
-                });
+                )
+                .await;
+            }
+            RunProgress::Prompt { stage, role, text } => {
+                self.push_feed(
+                    run_id,
+                    RunFeedItem {
+                        stage,
+                        role,
+                        event: AgentEvent::Prompt { text },
+                    },
+                )
+                .await;
             }
             RunProgress::Note { message } => {
-                let item = RunFeedItem {
-                    stage: self
-                        .run(run_id)
-                        .await
-                        .map(|r| r.stage)
-                        .unwrap_or(RunStage::Preparing),
-                    role: None,
-                    event: AgentEvent::Raw { text: message },
-                };
-                {
-                    let mut runs = self.runs.write().await;
-                    if let Some(run) = runs.get_mut(run_id) {
-                        run.push_feed(item.clone());
-                    }
-                }
-                self.emit(EngineEvent::RunOutput {
-                    run_id: run_id.to_string(),
-                    item,
-                });
+                let stage = self
+                    .run(run_id)
+                    .await
+                    .map(|r| r.stage)
+                    .unwrap_or(RunStage::Preparing);
+                self.push_feed(
+                    run_id,
+                    RunFeedItem {
+                        stage,
+                        role: None,
+                        event: AgentEvent::Raw { text: message },
+                    },
+                )
+                .await;
             }
             RunProgress::StageStats(stats) => {
                 self.update(run_id, |run| run.stats.push(stats)).await;
             }
             RunProgress::StageFinished { .. } => {}
         }
+    }
+
+    /// Record one entry in a run's feed and push it to the UI.
+    async fn push_feed(&self, run_id: &str, item: RunFeedItem) {
+        {
+            let mut runs = self.runs.write().await;
+            if let Some(run) = runs.get_mut(run_id) {
+                run.push_feed(item.clone());
+            }
+        }
+        self.emit(EngineEvent::RunOutput {
+            run_id: run_id.to_string(),
+            item,
+        });
     }
 
     async fn update(&self, run_id: &str, mutate: impl FnOnce(&mut RunRecord)) {
