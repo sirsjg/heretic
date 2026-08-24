@@ -4,9 +4,15 @@ name: Release
 # the next version, writes it into every manifest, tags it and opens the GitHub
 # release. build.yml then attaches the desktop bundles to that release.
 #
-# The tag is pushed with GITHUB_TOKEN, which deliberately does not trigger other
-# workflows — so the build is called directly from here rather than waiting on a
-# tag-push event that will never arrive.
+# RELEASE_TOKEN is required: the `main` ruleset demands a pull request, and
+# GITHUB_TOKEN has no way past it — bypass actors on a user-owned repository
+# cannot include the Actions app, only repository roles. So the release commit
+# and tag are pushed with a personal access token belonging to an admin, whose
+# bypass does apply. It needs `contents: read and write` on this repository.
+#
+# A token that is not GITHUB_TOKEN does trigger other workflows, so the release
+# commit carries [skip ci] and build.yml is called directly from here rather
+# than by its own tag trigger.
 
 on:
   push:
@@ -32,10 +38,28 @@ jobs:
       published: ${{ steps.semantic.outputs.published }}
       tag: ${{ steps.semantic.outputs.tag }}
     steps:
+      # Without the token the push is rejected by the ruleset halfway through a
+      # release, after the tag and the GitHub release already exist. Say so
+      # before any of that happens.
+      - name: Check for the release token
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "${RELEASE_TOKEN}" ]; then
+            echo "::error::RELEASE_TOKEN is not set — see the comment at the top of release.yml"
+            echo "The main ruleset blocks GITHUB_TOKEN from pushing the release"
+            echo "commit. Create a personal access token with contents: read and"
+            echo "write on this repository, and save it as the RELEASE_TOKEN secret."
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # Persisted for @semantic-release/git, which pushes the release commit
+          # with whatever credential the checkout left behind.
           persist-credentials: true
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - uses: actions/setup-node@v7
         with:
@@ -55,7 +79,7 @@ jobs:
       - name: Run semantic-release
         id: semantic
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
