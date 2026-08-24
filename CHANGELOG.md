@@ -1,3 +1,9 @@
+## [0.3.1](https://github.com/sirsjg/heretic/compare/v0.3.0...v0.3.1) (2026-08-24)
+
+### Bug Fixes
+
+* **app:** add native squircle icons for mac ([544cb88](https://github.com/sirsjg/heretic/commit/544cb884b79a1914c1c9470a7979f68381a14300))
+
 ## [0.3.0](https://github.com/sirsjg/heretic/compare/v0.2.0...v0.3.0) (2026-08-24)
 
 ### Features
