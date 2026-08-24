@@ -1,11 +1,15 @@
 # Who has to approve a change before it can land on main.
 #
-# Everything is owned by @sirsjg. The `main` ruleset requires a code owner's
-# review on every pull request, so an outside contributor's work cannot merge
-# without one — the repository admin keeps a bypass, and github-actions[bot]
-# has one so semantic-release can push its release commit.
+# Everything is owned by @sirsjg and @thebulklord. The `main` ruleset requires
+# a code owner's review on every pull request, so an outside contributor's work
+# cannot merge without one. The repository admin keeps a bypass; the release
+# job gets past the ruleset with RELEASE_TOKEN instead, since a user-owned
+# repository cannot name the Actions app as a bypass actor.
+#
+# A code owner has to have write access to the repository, or GitHub ignores
+# the entry and never requests their review.
 #
 # Ownership is by path, last match wins. Narrow the list here before handing
 # out write access, not after.
 
-* @sirsjg
+* @sirsjg @thebulklord
