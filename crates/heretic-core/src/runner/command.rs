@@ -27,9 +27,62 @@ pub struct AgentCommand {
 /// configuration override.
 const OSS_PROVIDER: &str = "heretic-oss";
 
+/// The provider id Heretic declares in the opencode configuration it generates.
+///
+/// opencode addresses a model as `provider/model`, splitting at the first
+/// slash, so a model id containing slashes survives the prefix intact.
+const OPENCODE_PROVIDER: &str = "heretic-host";
+
 /// Ensure a host address ends at the OpenAI-compatible path.
 fn openai_base(url: &str) -> String {
     crate::detect::openai_base(url)
+}
+
+/// An opencode configuration declaring one provider pointing at `base_url`.
+///
+/// opencode reads providers from a configuration file rather than from flags,
+/// so this is handed over in `OPENCODE_CONFIG_CONTENT` — which replaces the
+/// file rather than merging with it, leaving the user's own configuration
+/// untouched on disk.
+fn opencode_host_config(
+    base_url: &str,
+    model: Option<&str>,
+    context_window: Option<u64>,
+) -> String {
+    let mut entry = serde_json::Map::new();
+    if let Some(window) = context_window.filter(|w| *w > 0) {
+        // opencode wants an output ceiling alongside the window and reserves
+        // that much of it for the reply; without both it takes neither.
+        entry.insert(
+            "limit".into(),
+            serde_json::json!({
+                "context": window,
+                "output": (window / 4).clamp(1_024, 32_768),
+            }),
+        );
+    }
+
+    let mut models = serde_json::Map::new();
+    if let Some(model) = model {
+        models.insert(model.to_string(), serde_json::Value::Object(entry));
+    }
+
+    serde_json::json!({
+        "provider": {
+            OPENCODE_PROVIDER: {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Heretic host",
+                "options": {
+                    "baseURL": openai_base(base_url),
+                    // Local servers ignore this, but the OpenAI-compatible
+                    // provider will not start without something here.
+                    "apiKey": "heretic",
+                },
+                "models": models,
+            }
+        }
+    })
+    .to_string()
 }
 
 /// Build the command for `profile`, carrying `prompt`.
@@ -136,6 +189,56 @@ pub fn build_command(profile: &ModelProfile, prompt: &str) -> AgentCommand {
                 env,
                 prompt_via_stdin: false,
                 output: OutputFormat::CodexJsonl,
+            }
+        }
+
+        RunnerKind::OpenCode { base_url } => {
+            // `opencode run` is the non-interactive command; `--auto` is what
+            // stops it waiting on a permission prompt no one is there to answer.
+            let mut args = vec![
+                "run".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+            ];
+
+            if profile.autonomous {
+                args.push("--auto".into());
+            }
+
+            let model = profile.model.as_deref().filter(|m| !m.is_empty());
+
+            match base_url.as_deref().filter(|url| !url.is_empty()) {
+                // A host of our own: declared as a provider in a generated
+                // configuration, since opencode takes no endpoint flag.
+                Some(url) => {
+                    env.entry("OPENCODE_CONFIG_CONTENT".into())
+                        .or_insert_with(|| {
+                            opencode_host_config(url, model, profile.context_window)
+                        });
+                    if let Some(model) = model {
+                        args.push("-m".into());
+                        args.push(format!("{OPENCODE_PROVIDER}/{model}"));
+                    }
+                }
+                // No host: the model is addressed through the user's own
+                // opencode providers, so it already carries its prefix.
+                None => {
+                    if let Some(model) = model {
+                        args.push("-m".into());
+                        args.push(model.into());
+                    }
+                }
+            }
+
+            args.extend(profile.extra_args.iter().cloned());
+            args.push(prompt.to_string());
+
+            AgentCommand {
+                program: "opencode".into(),
+                args,
+                env,
+                prompt_via_stdin: false,
+                output: OutputFormat::OpenCodeJson,
             }
         }
 
@@ -376,6 +479,125 @@ mod tests {
         let joined = build_command(&p, "hi").args.join(" ");
         assert!(joined.contains("http://spark.local:11434/v1\""), "{joined}");
         assert!(!joined.contains("/v1/v1"));
+    }
+
+    // --- opencode -------------------------------------------------------------
+
+    #[test]
+    fn opencode_runs_non_interactively_and_streams_json() {
+        let mut p = profile(RunnerKind::OpenCode { base_url: None });
+        p.model = Some("anthropic/claude-opus-5".into());
+
+        let command = build_command(&p, "build it");
+        assert_eq!(command.program, "opencode");
+        assert_eq!(
+            command.args,
+            vec![
+                "run",
+                "--format",
+                "json",
+                "--auto",
+                "-m",
+                "anthropic/claude-opus-5",
+                "build it"
+            ]
+        );
+        assert_eq!(command.output, OutputFormat::OpenCodeJson);
+        assert!(!command.prompt_via_stdin);
+        // Without a host of our own, the user's opencode configuration stands.
+        assert!(!command.env.contains_key("OPENCODE_CONFIG_CONTENT"));
+    }
+
+    #[test]
+    fn a_supervised_opencode_profile_still_asks_permission() {
+        let mut p = profile(RunnerKind::OpenCode { base_url: None });
+        p.autonomous = false;
+        let command = build_command(&p, "hi");
+        assert!(!command.args.iter().any(|a| a == "--auto"));
+    }
+
+    #[test]
+    fn an_opencode_host_is_declared_in_a_generated_configuration() {
+        // opencode takes no endpoint flag, so a host of our own has to arrive
+        // as a provider in the configuration it reads.
+        let mut p = profile(RunnerKind::OpenCode {
+            base_url: Some("http://spark.local:11434".into()),
+        });
+        p.model = Some("qwen3-coder:30b".into());
+        p.context_window = Some(262_144);
+
+        let command = build_command(&p, "build it");
+
+        let model = command.args.iter().position(|a| a == "-m").unwrap();
+        assert_eq!(command.args[model + 1], "heretic-host/qwen3-coder:30b");
+        assert_eq!(command.args.last().unwrap(), "build it");
+
+        let config: serde_json::Value =
+            serde_json::from_str(command.env.get("OPENCODE_CONFIG_CONTENT").unwrap()).unwrap();
+        let provider = &config["provider"]["heretic-host"];
+        assert_eq!(provider["npm"], "@ai-sdk/openai-compatible");
+        assert_eq!(
+            provider["options"]["baseURL"],
+            "http://spark.local:11434/v1"
+        );
+        // The real window, rather than whatever opencode would assume, plus the
+        // output ceiling it insists on alongside it.
+        let limit = &provider["models"]["qwen3-coder:30b"]["limit"];
+        assert_eq!(limit["context"], 262_144);
+        assert_eq!(limit["output"], 32_768);
+    }
+
+    #[test]
+    fn an_opencode_model_id_containing_slashes_keeps_its_prefix() {
+        // opencode splits `provider/model` at the first slash, so a vLLM-style
+        // id survives being prefixed.
+        let mut p = profile(RunnerKind::OpenCode {
+            base_url: Some("http://spark.local:8000/v1".into()),
+        });
+        p.model = Some("Qwen/Qwen3-Coder-30B".into());
+
+        let command = build_command(&p, "hi");
+        let model = command.args.iter().position(|a| a == "-m").unwrap();
+        assert_eq!(command.args[model + 1], "heretic-host/Qwen/Qwen3-Coder-30B");
+
+        let config: serde_json::Value =
+            serde_json::from_str(command.env.get("OPENCODE_CONFIG_CONTENT").unwrap()).unwrap();
+        // Registered under the id the server knows, not the prefixed one.
+        assert!(config["provider"]["heretic-host"]["models"]["Qwen/Qwen3-Coder-30B"].is_object());
+        assert!(!config["provider"]["heretic-host"]["options"]["baseURL"]
+            .as_str()
+            .unwrap()
+            .contains("/v1/v1"));
+    }
+
+    #[test]
+    fn an_unknown_context_window_leaves_opencode_to_decide() {
+        let mut p = profile(RunnerKind::OpenCode {
+            base_url: Some("http://spark.local:11434".into()),
+        });
+        p.model = Some("qwen3-coder:30b".into());
+
+        let command = build_command(&p, "hi");
+        let config: serde_json::Value =
+            serde_json::from_str(command.env.get("OPENCODE_CONFIG_CONTENT").unwrap()).unwrap();
+        assert!(config["provider"]["heretic-host"]["models"]["qwen3-coder:30b"]["limit"].is_null());
+    }
+
+    #[test]
+    fn a_profile_supplied_opencode_configuration_wins() {
+        let mut p = profile(RunnerKind::OpenCode {
+            base_url: Some("http://spark.local:11434".into()),
+        });
+        p.env
+            .insert("OPENCODE_CONFIG_CONTENT".into(), "{\"provider\":{}}".into());
+        let command = build_command(&p, "hi");
+        assert_eq!(
+            command
+                .env
+                .get("OPENCODE_CONFIG_CONTENT")
+                .map(String::as_str),
+            Some("{\"provider\":{}}")
+        );
     }
 
     #[test]

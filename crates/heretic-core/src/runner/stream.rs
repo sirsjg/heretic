@@ -16,6 +16,8 @@ pub enum OutputFormat {
     ClaudeStreamJson,
     /// Codex's `--json`: one JSON event per line.
     CodexJsonl,
+    /// opencode's `run --format json`: one JSON event per line.
+    OpenCodeJson,
 }
 
 /// Token counts reported by a backend. Cached tokens are kept apart from fresh
@@ -71,7 +73,13 @@ pub enum AgentEvent {
     Error { message: String },
     /// Token accounting from the backend. Bookkeeping, not conversation: it is
     /// folded into the run's stats and never shown in the feed.
-    Usage { usage: TokenUsage },
+    Usage {
+        usage: TokenUsage,
+        /// What this turn cost, when the backend prices it. Defaults on the way
+        /// in so history written before backends reported it still replays.
+        #[serde(default)]
+        cost_usd: Option<f64>,
+    },
     /// The prompt Heretic generated for a stage and handed to the agent.
     ///
     /// Not something an agent said — it is what the earlier stages produced,
@@ -144,6 +152,7 @@ pub fn parse_line(line: &str, format: OutputFormat) -> Option<AgentEvent> {
 
     match format {
         OutputFormat::CodexJsonl => parse_codex(&value),
+        OutputFormat::OpenCodeJson => parse_opencode(&value),
         _ => parse_claude(&value),
     }
 }
@@ -184,7 +193,10 @@ fn parse_codex_usage(value: &serde_json::Value) -> Option<AgentEvent> {
         cache_read_tokens: cached,
         cache_creation_tokens: 0,
     };
-    (!usage.is_zero()).then_some(AgentEvent::Usage { usage })
+    (!usage.is_zero()).then_some(AgentEvent::Usage {
+        usage,
+        cost_usd: None,
+    })
 }
 
 fn parse_codex_item(item: &serde_json::Value) -> Option<AgentEvent> {
@@ -254,6 +266,103 @@ fn changed_paths(item: &serde_json::Value) -> Option<String> {
     (!paths.is_empty()).then(|| truncate(&paths.join(", "), 120))
 }
 
+/// opencode's `run --format json` stream.
+///
+/// Shapes confirmed against opencode 1.18: every line carries a `type` and the
+/// message part it describes under `part`. Unlike Codex there is no closing
+/// summary event — the run simply ends after the last `step_finish`, so the
+/// agent's final word is its last `text` part.
+fn parse_opencode(value: &serde_json::Value) -> Option<AgentEvent> {
+    let part = value.get("part");
+
+    match value.get("type").and_then(|t| t.as_str())? {
+        "text" => {
+            let text = part?.get("text")?.as_str()?.trim();
+            (!text.is_empty()).then(|| AgentEvent::Text {
+                text: text.to_string(),
+            })
+        }
+        "tool_use" => parse_opencode_tool(part?),
+        "step_finish" => parse_opencode_usage(part?),
+        "error" => Some(AgentEvent::Error {
+            message: opencode_error_message(value.get("error")),
+        }),
+        // Reasoning is internal chatter, and step_start plus the session and
+        // permission bookkeeping carry nothing worth showing.
+        _ => None,
+    }
+}
+
+/// opencode wraps a failure as `{"error":{"name":…,"data":{"message":…}}}`,
+/// where the name is the only thing present for some internal errors.
+fn opencode_error_message(error: Option<&serde_json::Value>) -> String {
+    let Some(error) = error else {
+        return "unknown error".into();
+    };
+    error
+        .get("data")
+        .and_then(|d| d.get("message"))
+        .and_then(|m| m.as_str())
+        .or_else(|| error.get("message").and_then(|m| m.as_str()))
+        .or_else(|| error.get("name").and_then(|n| n.as_str()))
+        .unwrap_or("unknown error")
+        .to_string()
+}
+
+fn parse_opencode_tool(part: &serde_json::Value) -> Option<AgentEvent> {
+    let state = part.get("state");
+    let status = state
+        .and_then(|s| s.get("status"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("completed");
+
+    // A tool that is only pending or running will be reported again once it
+    // settles, and showing it twice would double up the feed.
+    if !matches!(status, "completed" | "error") {
+        return None;
+    }
+
+    let name = part
+        .get("tool")
+        .and_then(|t| t.as_str())
+        .unwrap_or("tool")
+        .to_string();
+
+    // The input names what was acted on; opencode's own title is the fallback,
+    // and is all a tool like `todowrite` has ("3 todos").
+    let detail = tool_detail(state.and_then(|s| s.get("input"))).or_else(|| {
+        state
+            .and_then(|s| s.get("title"))
+            .and_then(|t| t.as_str())
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(|title| truncate(title, 120))
+    });
+
+    Some(AgentEvent::Tool { name, detail })
+}
+
+/// opencode reports each step's tokens with the cached share held apart from
+/// `input`, and prices the step alongside them.
+fn parse_opencode_usage(part: &serde_json::Value) -> Option<AgentEvent> {
+    let tokens = part.get("tokens")?;
+    let count =
+        |value: &serde_json::Value, key: &str| value.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+    let cache = tokens.get("cache");
+
+    let usage = TokenUsage {
+        input_tokens: count(tokens, "input"),
+        // Reasoning tokens are generated and billed as output, and TokenUsage
+        // keeps no separate place for them.
+        output_tokens: count(tokens, "output") + count(tokens, "reasoning"),
+        cache_read_tokens: cache.map_or(0, |c| count(c, "read")),
+        cache_creation_tokens: cache.map_or(0, |c| count(c, "write")),
+    };
+    let cost_usd = part.get("cost").and_then(|c| c.as_f64());
+
+    (!usage.is_zero() || cost_usd.is_some()).then_some(AgentEvent::Usage { usage, cost_usd })
+}
+
 /// Claude Code's `--output-format stream-json`.
 fn parse_claude(value: &serde_json::Value) -> Option<AgentEvent> {
     match value.get("type").and_then(|t| t.as_str()) {
@@ -319,7 +428,16 @@ fn parse_assistant(value: &serde_json::Value) -> Option<AgentEvent> {
 /// "Edit: src/main.rs" rather than a wall of JSON.
 fn tool_detail(input: Option<&serde_json::Value>) -> Option<String> {
     let input = input?.as_object()?;
-    for key in ["file_path", "path", "command", "pattern", "url", "query"] {
+    // `filePath` is opencode's spelling of the same idea.
+    for key in [
+        "file_path",
+        "filePath",
+        "path",
+        "command",
+        "pattern",
+        "url",
+        "query",
+    ] {
         if let Some(value) = input.get(key).and_then(|v| v.as_str()) {
             let value = value.trim();
             if !value.is_empty() {
@@ -557,7 +675,9 @@ mod tests {
                     output_tokens: 14,
                     cache_read_tokens: 1000,
                     cache_creation_tokens: 0,
-                }
+                },
+                // Codex does not price a turn.
+                cost_usd: None,
             })
         );
     }
@@ -618,6 +738,137 @@ mod tests {
         match parse_line(line, OutputFormat::CodexJsonl) {
             Some(AgentEvent::Error { message }) => assert!(message.contains("Reconnecting")),
             other => panic!("expected an error, got {other:?}"),
+        }
+    }
+
+    // --- opencode -------------------------------------------------------------
+    //
+    // As with Codex, these lines were captured verbatim from
+    // `opencode run --format json` (opencode 1.18).
+
+    #[test]
+    fn an_opencode_text_part_becomes_text() {
+        let line = r#"{"type":"text","timestamp":1787574164299,"sessionID":"ses_fcc4","part":{"id":"prt_033b","messageID":"msg_033b","sessionID":"ses_fcc4","type":"text","text":"Hello there, friend.","time":{"start":1787574164261,"end":1787574164286}}}"#;
+        assert_eq!(
+            parse_line(line, OutputFormat::OpenCodeJson),
+            Some(AgentEvent::Text {
+                text: "Hello there, friend.".into()
+            })
+        );
+    }
+
+    #[test]
+    fn an_opencode_tool_reports_the_file_it_touched() {
+        // opencode spells the key `filePath` where Claude uses `file_path`.
+        let line = r#"{"type":"tool_use","sessionID":"ses_fcc4","part":{"type":"tool","tool":"write","callID":"call_1","state":{"status":"completed","input":{"content":"done","filePath":"/repo/out.txt"},"output":"Wrote file successfully.","title":"repo/out.txt"},"id":"prt_033b","sessionID":"ses_fcc4","messageID":"msg_033b"}}"#;
+        assert_eq!(
+            parse_line(line, OutputFormat::OpenCodeJson),
+            Some(AgentEvent::Tool {
+                name: "write".into(),
+                detail: Some("/repo/out.txt".into())
+            })
+        );
+    }
+
+    #[test]
+    fn an_opencode_shell_command_shows_in_the_feed() {
+        let line = r#"{"type":"tool_use","part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"cargo test","workdir":"/repo"},"title":"cargo test"}}}"#;
+        assert_eq!(
+            parse_line(line, OutputFormat::OpenCodeJson),
+            Some(AgentEvent::Tool {
+                name: "bash".into(),
+                detail: Some("cargo test".into())
+            })
+        );
+    }
+
+    #[test]
+    fn an_opencode_tool_with_no_recognisable_input_falls_back_to_its_title() {
+        let line = r#"{"type":"tool_use","part":{"type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"a"}]},"title":"3 todos"}}}"#;
+        assert_eq!(
+            parse_line(line, OutputFormat::OpenCodeJson),
+            Some(AgentEvent::Tool {
+                name: "todowrite".into(),
+                detail: Some("3 todos".into())
+            })
+        );
+    }
+
+    #[test]
+    fn an_opencode_tool_still_settling_does_not_double_up() {
+        // A pending call is reported again once it completes.
+        for status in ["pending", "running"] {
+            let line = format!(
+                r#"{{"type":"tool_use","part":{{"type":"tool","tool":"bash","state":{{"status":"{status}","input":{{"command":"cargo test"}}}}}}}}"#
+            );
+            assert_eq!(
+                parse_line(&line, OutputFormat::OpenCodeJson),
+                None,
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_opencode_tool_is_still_shown() {
+        let line = r#"{"type":"tool_use","part":{"type":"tool","tool":"bash","state":{"status":"error","input":{"command":"false"},"title":"false"}}}"#;
+        assert_eq!(
+            parse_line(line, OutputFormat::OpenCodeJson),
+            Some(AgentEvent::Tool {
+                name: "bash".into(),
+                detail: Some("false".into())
+            })
+        );
+    }
+
+    #[test]
+    fn an_opencode_step_reports_its_tokens_and_what_it_cost() {
+        // `input` excludes the cached share, which is reported separately;
+        // reasoning tokens are generated, so they land with the output.
+        let line = r#"{"type":"step_finish","part":{"id":"prt_033b","reason":"stop","type":"step-finish","tokens":{"total":9288,"input":7605,"output":7,"reasoning":12,"cache":{"write":0,"read":1664}},"cost":0.031}}"#;
+        assert_eq!(
+            parse_line(line, OutputFormat::OpenCodeJson),
+            Some(AgentEvent::Usage {
+                usage: TokenUsage {
+                    input_tokens: 7605,
+                    output_tokens: 19,
+                    cache_read_tokens: 1664,
+                    cache_creation_tokens: 0,
+                },
+                cost_usd: Some(0.031),
+            })
+        );
+    }
+
+    #[test]
+    fn an_opencode_error_is_surfaced() {
+        let line = r#"{"type":"error","sessionID":"ses_fcc4","error":{"name":"APIError","data":{"message":"model 'Org/Some-Model' not found","statusCode":404}}}"#;
+        assert_eq!(
+            parse_line(line, OutputFormat::OpenCodeJson),
+            Some(AgentEvent::Error {
+                message: "model 'Org/Some-Model' not found".into()
+            })
+        );
+    }
+
+    #[test]
+    fn an_opencode_error_with_no_message_still_names_itself() {
+        let line = r#"{"type":"error","error":{"name":"UnknownError"}}"#;
+        assert_eq!(
+            parse_line(line, OutputFormat::OpenCodeJson),
+            Some(AgentEvent::Error {
+                message: "UnknownError".into()
+            })
+        );
+    }
+
+    #[test]
+    fn opencode_step_and_reasoning_bookkeeping_is_dropped() {
+        for line in [
+            r#"{"type":"step_start","part":{"id":"prt_033b","type":"step-start"}}"#,
+            r#"{"type":"reasoning","part":{"type":"reasoning","text":"thinking out loud"}}"#,
+        ] {
+            assert_eq!(parse_line(line, OutputFormat::OpenCodeJson), None, "{line}");
         }
     }
 

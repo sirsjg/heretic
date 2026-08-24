@@ -101,6 +101,7 @@ export type RunnerKind =
   | { kind: "claude_code" }
   | { kind: "codex" }
   | { kind: "codex_oss"; base_url?: string | null }
+  | { kind: "opencode"; base_url?: string | null }
   | { kind: "custom"; command: string; args: string[] };
 
 export interface ModelProfile {

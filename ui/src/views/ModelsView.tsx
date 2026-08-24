@@ -20,6 +20,7 @@ const RUNNER_OPTIONS = [
   { value: "claude_code", label: "Claude Code" },
   { value: "codex", label: "Codex" },
   { value: "codex_oss", label: "Codex — local model (Ollama)" },
+  { value: "opencode", label: "OpenCode" },
   { value: "custom", label: "Custom command" },
 ];
 
@@ -37,6 +38,10 @@ function runnerDescription(profile: ModelProfile): string {
       return profile.runner.base_url
         ? `codex · ${profile.model ?? "default"} · ${profile.runner.base_url}`
         : `codex --oss · ${profile.model ?? "default"} · Ollama on this machine`;
+    case "opencode":
+      return profile.runner.base_url
+        ? `opencode · ${profile.model ?? "default"} · ${profile.runner.base_url}`
+        : `opencode · ${profile.model ?? "its own default"}`;
     case "custom":
       return [profile.runner.command, ...profile.runner.args].join(" ");
   }
@@ -268,6 +273,10 @@ function ProfileEditor({
 }) {
   const kind = runnerKey(profile.runner);
   const knownModels = knownModelsFor(kind);
+  // An OpenCode profile bound to a host names the model on its own; left
+  // unbound, the model has to carry the provider opencode knows it under.
+  const hasHost =
+    profile.runner.kind === "opencode" && !!profile.runner.base_url;
   const [customModel, setCustomModel] = useState(false);
   const useCustomModel =
     knownModels !== null &&
@@ -278,11 +287,13 @@ function ProfileEditor({
     const runner: RunnerKind =
       next === "codex_oss"
         ? { kind: "codex_oss", base_url: "http://localhost:11434/v1" }
-        : next === "custom"
-          ? { kind: "custom", command: "", args: [] }
-          : next === "codex"
-            ? { kind: "codex" }
-            : { kind: "claude_code" };
+        : next === "opencode"
+          ? { kind: "opencode", base_url: null }
+          : next === "custom"
+            ? { kind: "custom", command: "", args: [] }
+            : next === "codex"
+              ? { kind: "codex" }
+              : { kind: "claude_code" };
     // A model id rarely survives a runner switch, so fall back to the default.
     setCustomModel(false);
     onChange({ ...profile, runner, model: null });
@@ -313,7 +324,11 @@ function ProfileEditor({
               : "Default lets the CLI pick its usual model."
             : kind === "codex_oss"
               ? "An Ollama tag, e.g. qwen3-coder:30b. Pull it first with `ollama pull`."
-              : "Leave empty to use the CLI's own default."
+              : kind === "opencode"
+                ? hasHost
+                  ? "The id the host knows the model by, e.g. qwen3-coder:30b."
+                  : "provider/model, as OpenCode writes it — e.g. anthropic/claude-opus-5. Run `opencode models` to see yours."
+                : "Leave empty to use the CLI's own default."
         }
       >
         {knownModels ? (
@@ -351,13 +366,37 @@ function ProfileEditor({
         ) : (
           <Input
             value={profile.model ?? ""}
-            placeholder={kind === "codex_oss" ? "qwen3-coder:30b" : "default"}
+            placeholder={
+              kind === "codex_oss" || hasHost
+                ? "qwen3-coder:30b"
+                : kind === "opencode"
+                  ? "anthropic/claude-opus-5"
+                  : "default"
+            }
             onChange={(e) =>
               onChange({ ...profile, model: e.target.value || null })
             }
           />
         )}
       </Field>
+
+      {profile.runner.kind === "opencode" && (
+        <Field
+          label="Host endpoint"
+          hint="Optional. Point OpenCode at a model server of your own; empty uses the providers it is already set up with."
+        >
+          <Input
+            value={profile.runner.base_url ?? ""}
+            placeholder="http://spark.local:11434"
+            onChange={(e) =>
+              onChange({
+                ...profile,
+                runner: { kind: "opencode", base_url: e.target.value || null },
+              })
+            }
+          />
+        </Field>
+      )}
 
       {profile.runner.kind === "codex_oss" && (
         <Field label="Ollama endpoint" hint="Where the local server is listening.">

@@ -1,8 +1,8 @@
 //! Finding out what is actually available to run.
 //!
 //! Two kinds of thing get discovered: agent CLIs installed on this machine
-//! (Claude Code, Codex), and model servers that hold weights — Ollama on
-//! localhost, or a box on the network such as a DGX Spark.
+//! (Claude Code, Codex, OpenCode), and model servers that hold weights — Ollama
+//! on localhost, or a box on the network such as a DGX Spark.
 //!
 //! Parsing is kept separate from I/O so the response shapes can be tested
 //! without a server.
@@ -30,7 +30,11 @@ pub struct CliStatus {
 }
 
 /// The agent CLIs Heretic knows how to drive.
-pub const KNOWN_CLIS: [(&str, &str); 2] = [("claude", "Claude Code"), ("codex", "Codex")];
+pub const KNOWN_CLIS: [(&str, &str); 3] = [
+    ("claude", "Claude Code"),
+    ("codex", "Codex"),
+    ("opencode", "OpenCode"),
+];
 
 /// Ask a CLI for its version, which also proves it is on `PATH` and runnable.
 pub async fn probe_cli(program: &str, label: &str) -> CliStatus {
