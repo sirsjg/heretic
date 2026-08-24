@@ -1,3 +1,18 @@
+## [0.3.0](https://github.com/sirsjg/heretic/compare/v0.2.0...v0.3.0) (2026-08-24)
+
+### Features
+
+* opencode support ([3196f57](https://github.com/sirsjg/heretic/commit/3196f57a8a2bfdd78aa597f3cbf30412acccb6f6))
+* **runner:** drive OpenCode as a coding harness ([2edd535](https://github.com/sirsjg/heretic/commit/2edd5352860dc251313e15bd6d1718a11bb45468))
+* **runner:** drive OpenCode as a coding harness ([3acd59b](https://github.com/sirsjg/heretic/commit/3acd59b0bcceb518aefe22178cf28be1b0f93b59))
+
+### Continuous Integration
+
+* add [@thebulklord](https://github.com/thebulklord) as a code owner ([347cd2a](https://github.com/sirsjg/heretic/commit/347cd2add9a4be7982bbbd0d4d793ad5773bda64))
+* own every path with a CODEOWNERS entry ([21c0e49](https://github.com/sirsjg/heretic/commit/21c0e4902c523e4002418a1318157187200852f9))
+* push releases with a token the main ruleset lets through ([80297eb](https://github.com/sirsjg/heretic/commit/80297ebc7db160f169d14a3a1f767f01575ff331))
+* push releases with a token the main ruleset lets through ([c174fe0](https://github.com/sirsjg/heretic/commit/c174fe03534ffddd369461d7bde78e7a0a1d7236))
+
 ## [0.2.0](https://github.com/sirsjg/heretic/compare/v0.1.0...v0.2.0) (2026-08-24)
 
 ### Features
