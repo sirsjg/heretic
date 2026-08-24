@@ -1,3 +1,18 @@
+## [0.2.0](https://github.com/sirsjg/heretic/compare/v0.1.0...v0.2.0) (2026-08-24)
+
+### Features
+
+* **runner:** record the prompt each stage was handed ([a2459dc](https://github.com/sirsjg/heretic/commit/a2459dc385f3e80a73e3f97122fc49173b564ca5))
+
+### Bug Fixes
+
+* **core:** keep run history across restarts ([9ff7fb1](https://github.com/sirsjg/heretic/commit/9ff7fb13d8af4e5bb997a562f5f45789ba87f453))
+
+### Continuous Integration
+
+* fail the audit on vulnerabilities, not on unmaintained crates ([6b1a484](https://github.com/sirsjg/heretic/commit/6b1a484ba5a8a55e06d743f6bd381ad12f03d53f))
+* watch dependencies for advisories ([8ed8115](https://github.com/sirsjg/heretic/commit/8ed8115a1c0c01150c0fee80ee5e63645c957f9f))
+
 # Changelog
 
 All notable changes to this project are documented here. Entries below the first
