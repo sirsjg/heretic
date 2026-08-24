@@ -6,6 +6,11 @@ name: Build release
 # on its own for rebuilding a tag by hand:
 #
 #   gh workflow run build.yml -f tag=v0.1.0
+#
+# There is deliberately no tag trigger. The tag is pushed with a personal access
+# token, which does start workflows, so a `push: tags:` trigger would race a
+# second set of bundles against the ones release.yml is already building — both
+# uploading to the same release.
 
 on:
   workflow_call:
@@ -20,9 +25,6 @@ on:
         description: Tag to build, e.g. v0.1.0
         required: true
         type: string
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
