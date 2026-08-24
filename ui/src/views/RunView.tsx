@@ -7,7 +7,7 @@ import type {
   RunStage,
   RunStatus,
 } from "../lib/types";
-import { STAGE_LABELS } from "../lib/types";
+import { STAGE_LABELS, isActive } from "../lib/types";
 import { Badge, Button, Dot, EmptyState, Spinner, cx } from "../components/ui";
 import { RunStats } from "../components/RunStats";
 import {
@@ -24,6 +24,7 @@ import { api } from "../lib/bridge";
 const STATUS_TONE: Record<RunStatus, "accent" | "success" | "danger" | "warn" | "neutral"> = {
   queued: "neutral",
   running: "accent",
+  waiting: "warn",
   succeeded: "success",
   failed: "danger",
   cancelled: "neutral",
@@ -33,6 +34,7 @@ const STATUS_TONE: Record<RunStatus, "accent" | "success" | "danger" | "warn" | 
 const STATUS_LABEL: Record<RunStatus, string> = {
   queued: "Queued",
   running: "Running",
+  waiting: "Waiting for you",
   succeeded: "Completed",
   failed: "Failed",
   cancelled: "Stopped",
@@ -57,6 +59,7 @@ export function RunView() {
     dismissRun,
     integrateRun,
     discardRunWork,
+    answerQuestion,
   } = useStore();
   const run = runs.find((r) => r.id === selectedRunId) ?? runs[0];
 
@@ -84,6 +87,7 @@ export function RunView() {
           run={run}
           onIntegrate={() => void integrateRun(run.id)}
           onDiscard={() => void discardRunWork(run.id)}
+          onAnswer={(answer) => void answerQuestion(run.id, answer)}
         />
       </div>
 
@@ -110,7 +114,7 @@ export function RunView() {
               <span className="flex items-center gap-1.5">
                 <Dot
                   tone={STATUS_TONE[item.status]}
-                  pulse={item.status === "running"}
+                  pulse={item.status === "running" || item.status === "waiting"}
                 />
                 <span className="truncate text-[11.5px] text-[var(--text-muted)]">
                   {item.project_name}
@@ -136,7 +140,7 @@ function RunHeader({
   onStop: () => void;
   onDismiss: () => void;
 }) {
-  const active = run.status === "running" || run.status === "queued";
+  const active = isActive(run);
   useClock(active);
 
   return (
@@ -249,11 +253,12 @@ function RunHeader({
 function StageTimeline({ run }: { run: RunRecord }) {
   const reached = new Set(run.feed.map((item) => item.stage));
   const currentIndex = TIMELINE.indexOf(run.stage);
+  const inFlight = run.status === "running" || run.status === "waiting";
 
   return (
     <div className="flex shrink-0 items-center gap-1 border-b px-5 py-2.5">
       {TIMELINE.map((stage, index) => {
-        const isCurrent = stage === run.stage && run.status === "running";
+        const isCurrent = stage === run.stage && inFlight;
         const isDone =
           reached.has(stage) && (currentIndex > index || run.status === "succeeded");
         const isSkipped = !reached.has(stage) && currentIndex > index;
@@ -303,10 +308,12 @@ function Feed({
   run,
   onIntegrate,
   onDiscard,
+  onAnswer,
 }: {
   run: RunRecord;
   onIntegrate: () => void;
   onDiscard: () => void;
+  onAnswer: (answer: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -352,7 +359,10 @@ function Feed({
             repeats={entry.repeats}
           />
         ))}
-        {run.status !== "running" && run.status !== "queued" && (
+        {run.status === "waiting" && run.question && (
+          <AnswerBox question={run.question.question} onAnswer={onAnswer} />
+        )}
+        {!isActive(run) && (
           <>
             <Outcome run={run} onIntegrate={onIntegrate} onDiscard={onDiscard} />
             <RunStats run={run} />
@@ -533,6 +543,40 @@ function FeedRow({
     return <PromptBlock stage={stage} text={event.text} />;
   }
 
+  if (event.type === "question") {
+    return (
+      <div
+        className="enter my-1 rounded-lg border px-3 py-2"
+        style={{ background: "var(--warn-soft)" }}
+      >
+        <div className="flex items-center gap-2">
+          <StageTag label={stageLabel} />
+          <Badge tone="warn">Question for you</Badge>
+        </div>
+        <p className="mt-1 whitespace-pre-wrap text-[12.5px] leading-relaxed">
+          {event.text}
+        </p>
+      </div>
+    );
+  }
+
+  if (event.type === "answer") {
+    return (
+      <div
+        className="enter my-1 rounded-lg border px-3 py-2"
+        style={{ background: "var(--accent-soft)" }}
+      >
+        <div className="flex items-center gap-2">
+          <StageTag label={stageLabel} />
+          <Badge tone="accent">Your answer</Badge>
+        </div>
+        <p className="mt-1 whitespace-pre-wrap text-[12.5px] leading-relaxed">
+          {event.text}
+        </p>
+      </div>
+    );
+  }
+
   if (event.type === "result") {
     const verdict = readVerdict(event.text ?? "");
     return (
@@ -633,6 +677,60 @@ function PromptBlock({ stage, text }: { stage: RunStage; text: string }) {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Where the user answers the question a run is paused on.
+ *
+ * The question itself is already in the feed just above; this is the reply.
+ */
+function AnswerBox({
+  question,
+  onAnswer,
+}: {
+  question: string;
+  onAnswer: (answer: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+
+  function send() {
+    const answer = draft.trim();
+    if (!answer) return;
+    onAnswer(answer);
+    setDraft("");
+  }
+
+  return (
+    <div
+      className="enter my-1 rounded-lg border px-3 py-2.5"
+      style={{ background: "var(--surface-2)", borderColor: "var(--warn)" }}
+    >
+      <p className="text-[12px] font-medium">The run is paused on this question:</p>
+      <p className="mt-1 whitespace-pre-wrap text-[12.5px] leading-relaxed text-[var(--text-muted)]">
+        {question}
+      </p>
+      <div className="mt-2 flex items-end gap-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              send();
+            }
+          }}
+          rows={2}
+          placeholder="Type your answer… (⌘↵ to send)"
+          className="min-h-[3.25rem] flex-1 resize-y rounded-lg border px-2.5 py-1.5 text-[12.5px] leading-relaxed outline-none focus:border-[var(--accent)]"
+          style={{ background: "var(--surface)" }}
+          autoFocus
+        />
+        <Button size="sm" variant="primary" onClick={send} disabled={!draft.trim()}>
+          Answer
+        </Button>
+      </div>
     </div>
   );
 }

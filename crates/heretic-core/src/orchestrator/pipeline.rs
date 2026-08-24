@@ -9,7 +9,7 @@ use super::types::{
 };
 use crate::config::{ModelProfile, Pipeline, Role};
 use crate::model::TaskStatus;
-use crate::prompt::{self, TaskContext, Verdict};
+use crate::prompt::{self, QuestionRound, TaskContext, Verdict};
 use crate::runner::{
     AgentEvent, AgentOutcome, CancelToken, Completion, ModelTokenUsage, TokenUsage,
 };
@@ -30,10 +30,19 @@ impl RunConfig {
     }
 }
 
+/// How many questions one stage may ask before the run is handed to a human.
+/// A stage that keeps asking is not converging, and every question costs a
+/// full re-run of the agent.
+const MAX_QUESTIONS_PER_STAGE: usize = 3;
+
 /// Run one task to completion.
 ///
 /// Never panics and never returns early without leaving the board in a coherent
 /// state: a task is either done, or back in Todo with a blocker explaining why.
+///
+/// `answers` is where the user's replies arrive when an agent asks a question
+/// (Yolo mode off); with Yolo on it is never read.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_run(
     context: TaskContext,
     config: RunConfig,
@@ -42,6 +51,7 @@ pub async fn execute_run(
     executor: &dyn AgentExecutor,
     cancel: CancelToken,
     progress: mpsc::Sender<RunProgress>,
+    mut answers: mpsc::Receiver<String>,
 ) -> RunOutcome {
     let task_id = context.task.id.clone();
 
@@ -84,21 +94,26 @@ pub async fn execute_run(
     }
     let _ = board.set_blocked_reason(&task_id, None).await;
 
+    // With Yolo off, an agent may pause the run with a question for the user.
+    let may_ask = !config.pipeline.yolo;
+
     // --- Planning -------------------------------------------------------------
     let mut brief: Option<String> = None;
     if config.pipeline.plan {
         match config.profile(Role::Orchestrator) {
             Some(planner) => {
                 let prompt = prompt::planner_prompt(&context);
-                match run_stage(
+                match run_stage_conversing(
                     RunStage::Planning,
                     Role::Orchestrator,
                     planner,
                     &prompt,
+                    may_ask,
                     workspace,
                     executor,
                     &cancel,
                     &progress,
+                    &mut answers,
                 )
                 .await
                 {
@@ -136,15 +151,17 @@ pub async fn execute_run(
         let prompt =
             prompt::implementer_prompt(&context, brief.as_deref(), revision_notes.as_deref());
 
-        match run_stage(
+        match run_stage_conversing(
             RunStage::Implementing,
             Role::Implementer,
             &implementer,
             &prompt,
+            may_ask,
             workspace,
             executor,
             &cancel,
             &progress,
+            &mut answers,
         )
         .await
         {
@@ -186,15 +203,17 @@ pub async fn execute_run(
         let diff = workspace.diff().await.unwrap_or_default();
         let review_prompt = prompt::reviewer_prompt(&context, &diff, &implementer_summary);
 
-        let review_text = match run_stage(
+        let review_text = match run_stage_conversing(
             RunStage::Reviewing,
             Role::Reviewer,
             reviewer,
             &review_prompt,
+            may_ask,
             workspace,
             executor,
             &cancel,
             &progress,
+            &mut answers,
         )
         .await
         {
@@ -245,15 +264,17 @@ pub async fn execute_run(
                 let change_text = describe_changes(&changes, &implementer_summary);
                 let prompt = prompt::documenter_prompt(&context, &change_text);
 
-                match run_stage(
+                match run_stage_conversing(
                     RunStage::Documenting,
                     Role::Documenter,
                     documenter,
                     &prompt,
+                    may_ask,
                     workspace,
                     executor,
                     &cancel,
                     &progress,
+                    &mut answers,
                 )
                 .await
                 {
@@ -348,6 +369,79 @@ enum StageResult {
     Ok(Option<String>),
     Failed(String),
     Cancelled,
+}
+
+/// Run one agent stage, pausing for the user whenever the agent asks a question.
+///
+/// With `may_ask` off this is exactly [`run_stage`]. With it on, the stage's
+/// prompt carries the question protocol; a closing `QUESTION:` line pauses the
+/// run until an answer arrives on `answers`, and the stage is then run again
+/// with the whole dialogue appended to its prompt.
+#[allow(clippy::too_many_arguments)]
+async fn run_stage_conversing(
+    stage: RunStage,
+    role: Role,
+    profile: &ModelProfile,
+    base_prompt: &str,
+    may_ask: bool,
+    workspace: &dyn Workspace,
+    executor: &dyn AgentExecutor,
+    cancel: &CancelToken,
+    progress: &mpsc::Sender<RunProgress>,
+    answers: &mut mpsc::Receiver<String>,
+) -> StageResult {
+    let mut rounds: Vec<QuestionRound> = Vec::new();
+
+    loop {
+        let prompt_text = prompt::compose_stage_prompt(base_prompt, &rounds, may_ask);
+        let result = run_stage(
+            stage, role, profile, &prompt_text, workspace, executor, cancel, progress,
+        )
+        .await;
+
+        let question = match &result {
+            StageResult::Ok(Some(summary)) if may_ask => prompt::parse_question(summary),
+            _ => None,
+        };
+        let Some(question) = question else {
+            return result;
+        };
+
+        if rounds.len() >= MAX_QUESTIONS_PER_STAGE {
+            return StageResult::Failed(format!(
+                "{} was still asking questions after {MAX_QUESTIONS_PER_STAGE} answers. \
+Last question: {question}",
+                profile.name
+            ));
+        }
+
+        let _ = progress
+            .send(RunProgress::QuestionAsked {
+                stage,
+                role: Some(role),
+                question: question.clone(),
+            })
+            .await;
+
+        // Nothing moves until the user answers — or stops the run.
+        let answer = tokio::select! {
+            _ = cancel.cancelled() => return StageResult::Cancelled,
+            answer = answers.recv() => match answer {
+                Some(answer) => answer,
+                // The sender is gone, so no answer can ever arrive.
+                None => return StageResult::Cancelled,
+            },
+        };
+
+        let _ = progress
+            .send(RunProgress::QuestionAnswered {
+                stage,
+                answer: answer.clone(),
+            })
+            .await;
+
+        rounds.push(QuestionRound { question, answer });
+    }
 }
 
 /// Run one agent stage, streaming its output into the progress channel.
@@ -995,6 +1089,7 @@ mod tests {
             env: Default::default(),
             timeout_secs: None,
             context_window: None,
+            reasoning_effort: None,
             autonomous: true,
         }
     }
@@ -1044,6 +1139,19 @@ mod tests {
         executor: &ScriptedExecutor,
         cancel: CancelToken,
     ) -> (RunOutcome, Vec<RunProgress>) {
+        let (_answer_tx, answer_rx) = mpsc::channel(8);
+        run_with_answers(config, board, workspace, executor, cancel, answer_rx).await
+    }
+
+    /// As [`run`], with a caller-supplied answers channel for question tests.
+    async fn run_with_answers(
+        config: RunConfig,
+        board: &FakeBoard,
+        workspace: &FakeWorkspace,
+        executor: &ScriptedExecutor,
+        cancel: CancelToken,
+        answers: mpsc::Receiver<String>,
+    ) -> (RunOutcome, Vec<RunProgress>) {
         let (tx, mut rx) = mpsc::channel(512);
         let collected = Arc::new(Mutex::new(Vec::new()));
         let sink = collected.clone();
@@ -1053,7 +1161,17 @@ mod tests {
             }
         });
 
-        let outcome = execute_run(context(), config, board, workspace, executor, cancel, tx).await;
+        let outcome = execute_run(
+            context(),
+            config,
+            board,
+            workspace,
+            executor,
+            cancel,
+            tx,
+            answers,
+        )
+        .await;
         let _ = pump.await;
         let progress = collected.lock().unwrap().clone();
         (outcome, progress)
@@ -1656,6 +1774,230 @@ mod tests {
             prompts[2].1.contains("diff --git"),
             "the reviewer's prompt must carry the diff"
         );
+    }
+
+    // --- Questions -----------------------------------------------------------
+
+    /// A pipeline with Yolo off: agents may pause the run with a question.
+    fn asking_pipeline() -> Pipeline {
+        Pipeline {
+            yolo: false,
+            review: false,
+            ..Pipeline::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_question_pauses_the_run_and_the_answer_reaches_the_agent() {
+        let board = FakeBoard::default();
+        let workspace = FakeWorkspace::with_changes();
+        let executor = ScriptedExecutor::with(
+            Role::Implementer,
+            vec![
+                StageScript::Says(
+                    "The task names port 8080 but the config says 3000.\nQUESTION: Which port should the service listen on?".into(),
+                ),
+                StageScript::Says("Done — the service listens on 3000.".into()),
+            ],
+        );
+
+        let (answer_tx, answer_rx) = mpsc::channel(8);
+        // The pipeline only reads an answer after asking, so it can be queued.
+        answer_tx.send("Use 3000.".to_string()).await.unwrap();
+
+        let (outcome, progress) = run_with_answers(
+            config(asking_pipeline(), &[Role::Implementer]),
+            &board,
+            &workspace,
+            &executor,
+            CancelToken::new(),
+            answer_rx,
+        )
+        .await;
+
+        assert_eq!(outcome.result, RunResult::Completed);
+        assert_eq!(executor.call_count(Role::Implementer), 2);
+
+        // The pause and the answer are both on the record.
+        assert!(progress.iter().any(|p| matches!(
+            p,
+            RunProgress::QuestionAsked { stage: RunStage::Implementing, question, .. }
+                if question.contains("Which port")
+        )));
+        assert!(progress.iter().any(|p| matches!(
+            p,
+            RunProgress::QuestionAnswered { answer, .. } if answer == "Use 3000."
+        )));
+
+        // The second attempt carries the whole dialogue.
+        let second = &executor.prompts_for(Role::Implementer)[1];
+        assert!(second.contains("Which port should the service listen on?"));
+        assert!(second.contains("Use 3000."));
+        assert!(second.contains("Answers from the user"));
+    }
+
+    #[tokio::test]
+    async fn yolo_mode_asks_nothing_and_intercepts_nothing() {
+        let board = FakeBoard::default();
+        let workspace = FakeWorkspace::with_changes();
+        // Even a QUESTION: line in the summary is left alone: the agent was
+        // never offered the protocol, so the line is just prose.
+        let executor = ScriptedExecutor::with(
+            Role::Implementer,
+            vec![StageScript::Says(
+                "Done.\nQUESTION: none, just noting the format.".into(),
+            )],
+        );
+
+        let pipeline = Pipeline {
+            review: false,
+            ..Pipeline::default()
+        };
+        let (outcome, progress) = run(
+            config(pipeline, &[Role::Implementer]),
+            &board,
+            &workspace,
+            &executor,
+            CancelToken::new(),
+        )
+        .await;
+
+        assert_eq!(outcome.result, RunResult::Completed);
+        assert_eq!(executor.call_count(Role::Implementer), 1);
+        assert!(!progress
+            .iter()
+            .any(|p| matches!(p, RunProgress::QuestionAsked { .. })));
+        // And the prompt never mentioned the protocol.
+        assert!(!executor.prompts_for(Role::Implementer)[0].contains("QUESTION:"));
+    }
+
+    #[tokio::test]
+    async fn with_yolo_off_the_prompt_offers_the_protocol() {
+        let board = FakeBoard::default();
+        let workspace = FakeWorkspace::with_changes();
+        let executor =
+            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Says("done".into())]);
+
+        let (_, _) = run(
+            config(asking_pipeline(), &[Role::Implementer]),
+            &board,
+            &workspace,
+            &executor,
+            CancelToken::new(),
+        )
+        .await;
+
+        let prompt = &executor.prompts_for(Role::Implementer)[0];
+        assert!(prompt.contains("QUESTION:"), "protocol missing: {prompt}");
+    }
+
+    #[tokio::test]
+    async fn a_stage_that_never_stops_asking_is_handed_to_a_human() {
+        let board = FakeBoard::default();
+        let workspace = FakeWorkspace::with_changes();
+        let ask = StageScript::Says("QUESTION: What about this one?".into());
+        let executor = ScriptedExecutor::with(
+            Role::Implementer,
+            vec![ask.clone(), ask.clone(), ask.clone(), ask.clone()],
+        );
+
+        let (answer_tx, answer_rx) = mpsc::channel(8);
+        for _ in 0..3 {
+            answer_tx.send("Answered.".to_string()).await.unwrap();
+        }
+
+        let (outcome, _) = run_with_answers(
+            config(asking_pipeline(), &[Role::Implementer]),
+            &board,
+            &workspace,
+            &executor,
+            CancelToken::new(),
+            answer_rx,
+        )
+        .await;
+
+        match outcome.result {
+            RunResult::Failed { ref reason, .. } => {
+                assert!(reason.contains("still asking questions"), "{reason}");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        // The original attempt plus one per answered question.
+        assert_eq!(executor.call_count(Role::Implementer), 4);
+    }
+
+    #[tokio::test]
+    async fn stopping_a_run_that_waits_on_a_question_cancels_it() {
+        let board = FakeBoard::default();
+        let workspace = FakeWorkspace::with_changes();
+        let executor = ScriptedExecutor::with(
+            Role::Implementer,
+            vec![StageScript::Says("QUESTION: Anyone there?".into())],
+        );
+
+        let (_answer_tx, answer_rx) = mpsc::channel::<String>(8);
+        let cancel = CancelToken::new();
+        let trigger = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            trigger.cancel();
+        });
+
+        let (outcome, _) = run_with_answers(
+            config(asking_pipeline(), &[Role::Implementer]),
+            &board,
+            &workspace,
+            &executor,
+            cancel,
+            answer_rx,
+        )
+        .await;
+
+        assert_eq!(outcome.result, RunResult::Cancelled);
+        // The task goes back to Todo like any other stopped run.
+        assert_eq!(
+            board.statuses(),
+            vec![TaskStatus::InProgress, TaskStatus::Todo]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reviewers_question_defers_the_verdict() {
+        let board = FakeBoard::default();
+        let workspace = FakeWorkspace::with_changes();
+        let executor =
+            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Says("done".into())])
+                .and(
+                    Role::Reviewer,
+                    vec![
+                        StageScript::Says(
+                            "QUESTION: Is dropping the legacy endpoint intended?".into(),
+                        ),
+                        StageScript::Says("All clear then.\nVERDICT: approve".into()),
+                    ],
+                );
+
+        let (answer_tx, answer_rx) = mpsc::channel(8);
+        answer_tx.send("Yes, it is deprecated.".to_string()).await.unwrap();
+
+        let pipeline = Pipeline {
+            yolo: false,
+            ..Pipeline::default()
+        };
+        let (outcome, _) = run_with_answers(
+            config(pipeline, &[Role::Implementer, Role::Reviewer]),
+            &board,
+            &workspace,
+            &executor,
+            CancelToken::new(),
+            answer_rx,
+        )
+        .await;
+
+        assert_eq!(outcome.result, RunResult::Completed);
+        assert_eq!(executor.call_count(Role::Reviewer), 2);
+        // The question round is not a review revision.
+        assert_eq!(outcome.revisions, 0);
     }
 
     #[tokio::test]

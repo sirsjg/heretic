@@ -3,8 +3,8 @@
 
 use super::pipeline::{execute_run, RunConfig};
 use super::types::{
-    AgentExecutor, Board, BoardError, Landing, RunFeedItem, RunProgress, RunRecord, RunResult,
-    RunStage, RunStatus, Workspace,
+    AgentExecutor, Board, BoardError, Landing, PendingQuestion, RunFeedItem, RunProgress,
+    RunRecord, RunResult, RunStage, RunStatus, Workspace,
 };
 use crate::config::{Integration, Isolation, ModelProfile, ProjectBinding, Role, Settings};
 use crate::flux::{FluxClient, FluxError};
@@ -197,6 +197,9 @@ fn interrupt(run: &mut RunRecord) -> bool {
     run.result = Some(RunResult::NeedsAttention {
         reason: "Heretic closed while this run was working".into(),
     });
+    // A question the run was paused on died with the process; nothing can
+    // answer it now.
+    run.question = None;
     run.finished_at = Some(chrono::Utc::now().to_rfc3339());
     if run.branch.is_some() && run.landing == Landing::Nothing {
         run.landing = Landing::OnBranch;
@@ -210,6 +213,8 @@ pub struct Engine {
     settings: Arc<RwLock<Settings>>,
     runs: Arc<RwLock<HashMap<String, RunRecord>>>,
     cancels: Arc<RwLock<HashMap<String, CancelToken>>>,
+    /// Where a paused run's answer is delivered, per run in flight.
+    answers: Arc<RwLock<HashMap<String, mpsc::Sender<String>>>>,
     events: broadcast::Sender<EngineEvent>,
     history: RunHistory,
 }
@@ -237,6 +242,7 @@ impl Engine {
             settings: Arc::new(RwLock::new(settings)),
             runs: Arc::new(RwLock::new(runs)),
             cancels: Arc::new(RwLock::new(HashMap::new())),
+            answers: Arc::new(RwLock::new(HashMap::new())),
             events,
             history,
         }
@@ -311,9 +317,27 @@ impl Engine {
         };
         if removed {
             self.cancels.write().await.remove(run_id);
+            self.answers.write().await.remove(run_id);
             self.history.forget(run_id);
         }
         removed
+    }
+
+    /// Answer the question a run is paused on. Returns false when the run is
+    /// not actually waiting — the question may have been answered elsewhere, or
+    /// the run stopped in the meantime.
+    pub async fn answer_question(&self, run_id: &str, answer: String) -> bool {
+        let waiting = self
+            .run(run_id)
+            .await
+            .is_some_and(|run| run.status == RunStatus::Waiting);
+        if !waiting {
+            return false;
+        }
+        match self.answers.read().await.get(run_id) {
+            Some(sender) => sender.send(answer).await.is_ok(),
+            None => false,
+        }
     }
 
     fn emit(&self, event: EngineEvent) {
@@ -392,6 +416,7 @@ impl Engine {
             branch: None,
             base_branch: None,
             worktree_path: None,
+            question: None,
             landing: Landing::Nothing,
             changes: ChangeSummary::default(),
             result: None,
@@ -409,6 +434,13 @@ impl Engine {
             .write()
             .await
             .insert(run_id.clone(), cancel.clone());
+        // Room for a few answers so a send never blocks the UI; the pipeline
+        // reads one per question asked.
+        let (answer_tx, answer_rx) = mpsc::channel(8);
+        self.answers
+            .write()
+            .await
+            .insert(run_id.clone(), answer_tx);
         self.publish(&record).await;
 
         let engine = Arc::clone(self);
@@ -419,7 +451,15 @@ impl Engine {
         let run_id_for_task = run_id.clone();
         tokio::spawn(async move {
             engine
-                .drive_run(run_id_for_task, context, binding, config, client, cancel)
+                .drive_run(
+                    run_id_for_task,
+                    context,
+                    binding,
+                    config,
+                    client,
+                    cancel,
+                    answer_rx,
+                )
                 .await;
         });
 
@@ -427,6 +467,7 @@ impl Engine {
     }
 
     /// Prepare the workspace, run the pipeline, and record the outcome.
+    #[allow(clippy::too_many_arguments)]
     async fn drive_run(
         self: Arc<Self>,
         run_id: String,
@@ -435,6 +476,7 @@ impl Engine {
         config: RunConfig,
         client: FluxClient,
         cancel: CancelToken,
+        answers: mpsc::Receiver<String>,
     ) {
         let task_id = context.task.id.clone();
 
@@ -484,7 +526,10 @@ impl Engine {
 
         let board = FluxBoard { client };
         let executor = CliExecutor;
-        let outcome = execute_run(context, config, &board, &workspace, &executor, cancel, tx).await;
+        let outcome = execute_run(
+            context, config, &board, &workspace, &executor, cancel, tx, answers,
+        )
+        .await;
         let _ = relay.await;
 
         // Tidy up the worktree once the work has been merged; otherwise leave it
@@ -577,6 +622,47 @@ impl Engine {
             RunProgress::Output(item) => self.push_feed(run_id, item).await,
             RunProgress::RevisionRequested { attempt, .. } => {
                 self.update(run_id, |run| run.revisions = attempt).await;
+            }
+            RunProgress::QuestionAsked {
+                stage,
+                role,
+                question,
+            } => {
+                self.update(run_id, |run| {
+                    run.status = RunStatus::Waiting;
+                    run.question = Some(PendingQuestion {
+                        stage,
+                        role,
+                        question: question.clone(),
+                    });
+                })
+                .await;
+                self.push_feed(
+                    run_id,
+                    RunFeedItem {
+                        stage,
+                        role,
+                        event: AgentEvent::Question { text: question },
+                    },
+                )
+                .await;
+            }
+            RunProgress::QuestionAnswered { stage, answer } => {
+                self.update(run_id, |run| {
+                    run.status = RunStatus::Running;
+                    run.question = None;
+                })
+                .await;
+                self.push_feed(
+                    run_id,
+                    RunFeedItem {
+                        stage,
+                        // The answer is the user's, not an agent's.
+                        role: None,
+                        event: AgentEvent::Answer { text: answer },
+                    },
+                )
+                .await;
             }
             RunProgress::Command { stage, command } => {
                 self.push_feed(
@@ -678,11 +764,14 @@ impl Engine {
             run.result = Some(result);
             run.revisions = revisions;
             run.changes = changes;
+            // A run stopped mid-question must not keep offering the answer box.
+            run.question = None;
             run.finished_at = Some(chrono::Utc::now().to_rfc3339());
         })
         .await;
 
         self.cancels.write().await.remove(run_id);
+        self.answers.write().await.remove(run_id);
     }
 
     /// Merge a finished run's branch into the branch it came from, then remove
@@ -869,6 +958,7 @@ mod tests {
             branch: Some("heretic/task1".into()),
             base_branch: Some("main".into()),
             worktree_path: Some("/tmp/worktree".into()),
+            question: None,
             landing: Landing::Nothing,
             changes: ChangeSummary::default(),
             result: None,
@@ -932,6 +1022,37 @@ mod tests {
         let reloaded = RunHistory::new(&dir.0).load();
         assert_eq!(reloaded[0].status, RunStatus::NeedsAttention);
         assert_eq!(reloaded[0].finished_at, runs[0].finished_at);
+    }
+
+    #[tokio::test]
+    async fn a_run_waiting_on_a_question_is_interrupted_like_any_other() {
+        let dir = TempDir::new("waiting");
+
+        let mut run = a_run_in_flight("run-1");
+        run.status = RunStatus::Waiting;
+        run.question = Some(PendingQuestion {
+            stage: RunStage::Implementing,
+            role: Some(Role::Implementer),
+            question: "Which port?".into(),
+        });
+        RunHistory::new(&dir.0).record(&run);
+
+        let engine =
+            Engine::with_history(Settings::with_starter_profiles(), RunHistory::new(&dir.0));
+        let runs = engine.runs().await;
+
+        // The agent that asked died with the process; the question with it.
+        assert_eq!(runs[0].status, RunStatus::NeedsAttention);
+        assert!(runs[0].question.is_none());
+
+        // And nothing is listening, so an answer is refused rather than lost.
+        assert!(!engine.answer_question("run-1", "3000".into()).await);
+    }
+
+    #[tokio::test]
+    async fn an_answer_for_a_run_that_is_not_waiting_is_refused() {
+        let engine = Engine::new(Settings::with_starter_profiles());
+        assert!(!engine.answer_question("no-such-run", "hello".into()).await);
     }
 
     #[tokio::test]

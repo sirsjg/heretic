@@ -186,6 +186,13 @@ export const api = {
     return isDesktop() ? invoke("stop_run", { runId }) : mock.stopRun(runId);
   },
 
+  /** Answer the question a paused run is waiting on. */
+  async answerQuestion(runId: string, answer: string): Promise<boolean> {
+    return isDesktop()
+      ? invoke("answer_question", { runId, answer })
+      : mock.answerQuestion(runId, answer);
+  },
+
   async dismissRun(runId: string): Promise<boolean> {
     return isDesktop()
       ? invoke("dismiss_run", { runId })

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useStore, currentBinding } from "../lib/store";
 import type { Epic, Priority, RunRecord, TaskView } from "../lib/types";
-import { PRIORITY_LABELS } from "../lib/types";
+import { PRIORITY_LABELS, isActive } from "../lib/types";
 import { api } from "../lib/bridge";
 import { count } from "../lib/format";
 import { Badge, Button, Dot, EmptyState, Panel, Spinner, Toggle, cx } from "../components/ui";
@@ -81,7 +81,7 @@ export function BoardView() {
 
   const readyCount = board.ready.length;
   const activeHere = runs.filter(
-    (r) => r.project_id === board.project.id && (r.status === "running" || r.status === "queued"),
+    (r) => r.project_id === board.project.id && isActive(r),
   ).length;
 
   async function chooseFolder() {
@@ -93,7 +93,7 @@ export function BoardView() {
       base_branch: null,
       isolation: "worktree",
       integration: "leave",
-      pipeline: { plan: false, review: true, document: false, max_revisions: 2 },
+      pipeline: { plan: false, review: true, document: false, max_revisions: 2, yolo: true },
       roles: {},
       auto_run: false,
       max_parallel: 2,
@@ -453,23 +453,27 @@ function TaskList({
                 {run && (
                   <Badge
                     tone={
-                      run.landing === "on_branch"
+                      run.status === "waiting" || run.landing === "on_branch"
                         ? "warn"
                         : run.status === "succeeded"
                           ? "success"
                           : "neutral"
                     }
                     title={
-                      run.landing === "on_branch"
-                        ? `Committed to ${run.branch}, not yet merged`
-                        : "Open this run"
+                      run.status === "waiting"
+                        ? "The agent asked a question and is waiting for your answer"
+                        : run.landing === "on_branch"
+                          ? `Committed to ${run.branch}, not yet merged`
+                          : "Open this run"
                     }
                   >
-                    {run.landing === "on_branch"
-                      ? "Not merged"
-                      : run.landing === "merged"
-                        ? "Merged"
-                        : "View run"}
+                    {run.status === "waiting"
+                      ? "Waiting for you"
+                      : run.landing === "on_branch"
+                        ? "Not merged"
+                        : run.landing === "merged"
+                          ? "Merged"
+                          : "View run"}
                   </Badge>
                 )}
 

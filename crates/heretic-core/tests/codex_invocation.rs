@@ -24,6 +24,7 @@ fn profile(runner: RunnerKind) -> ModelProfile {
         env: BTreeMap::new(),
         timeout_secs: Some(120),
         context_window: None,
+        reasoning_effort: None,
         autonomous: true,
     }
 }

@@ -11,6 +11,7 @@ import type {
   RunRecord,
   Settings,
 } from "./types";
+import { isActive } from "./types";
 
 export type Screen = "board" | "run" | "models" | "settings";
 
@@ -47,6 +48,8 @@ interface State {
   startTask: (taskId: string) => Promise<void>;
   runReady: () => Promise<void>;
   stopRun: (runId: string) => Promise<void>;
+  /** Answer the question a paused run is waiting on. */
+  answerQuestion: (runId: string, answer: string) => Promise<void>;
   dismissRun: (runId: string) => Promise<void>;
   integrateRun: (runId: string) => Promise<void>;
   discardRunWork: (runId: string) => Promise<void>;
@@ -258,6 +261,18 @@ export const useStore = create<State>((set, get) => ({
     set({ runs: await api.listRuns() });
   },
 
+  async answerQuestion(runId, answer) {
+    try {
+      const accepted = await api.answerQuestion(runId, answer);
+      if (!accepted) {
+        get().notify("error", "This run is not waiting for an answer any more.");
+        set({ runs: await api.listRuns() });
+      }
+    } catch (error) {
+      get().notify("error", describe(error));
+    }
+  },
+
   async dismissRun(runId) {
     await api.dismissRun(runId);
     const runs = await api.listRuns();
@@ -380,7 +395,9 @@ function applyEngineEvent(
       set({ runs });
 
       if (!get().selectedRunId) set({ selectedRunId: event.run.id });
-      if (event.run.status !== "running" && event.run.status !== "queued") {
+      // A run pausing on a question is still in flight; only a finished run
+      // changes what the board should show.
+      if (!isActive(event.run)) {
         void get().refreshBoard();
       }
       break;

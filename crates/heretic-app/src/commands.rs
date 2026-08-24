@@ -239,6 +239,17 @@ pub async fn stop_run(state: State<'_, AppState>, run_id: String) -> Response<bo
     Ok(state.engine.stop_run(&run_id).await)
 }
 
+/// Answer the question a paused run is waiting on. Returns false when the run
+/// is no longer waiting — stopped, finished, or already answered.
+#[tauri::command]
+pub async fn answer_question(
+    state: State<'_, AppState>,
+    run_id: String,
+    answer: String,
+) -> Response<bool> {
+    Ok(state.engine.answer_question(&run_id, answer).await)
+}
+
 #[tauri::command]
 pub async fn dismiss_run(state: State<'_, AppState>, run_id: String) -> Response<bool> {
     Ok(state.engine.dismiss_run(&run_id).await)
