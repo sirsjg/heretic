@@ -9,6 +9,7 @@
 import type {
   BoardView,
   Environment,
+  FileChange,
   HostProbe,
   ModelHost,
   ConnectionState,
@@ -16,6 +17,7 @@ import type {
   FluxEvent,
   Project,
   ProjectBinding,
+  RunCommit,
   RunRecord,
   Settings,
 } from "./types";
@@ -200,6 +202,32 @@ export const api = {
   /** Throw a finished run's work away. */
   async discardRunWork(runId: string): Promise<void> {
     if (isDesktop()) return invoke("discard_run_work", { runId });
+  },
+
+  /** Every file a run touched, with its line counts. */
+  async runChangedFiles(runId: string): Promise<FileChange[]> {
+    return isDesktop()
+      ? invoke("run_changed_files", { runId })
+      : mock.runChangedFiles(runId);
+  },
+
+  /** One file's diff, as a unified patch. */
+  async runFileDiff(runId: string, path: string): Promise<string> {
+    return isDesktop()
+      ? invoke("run_file_diff", { runId, path })
+      : mock.runFileDiff(runId, path);
+  },
+
+  /** The commits a run put on its branch, newest first. */
+  async runCommits(runId: string): Promise<RunCommit[]> {
+    return isDesktop() ? invoke("run_commits", { runId }) : mock.runCommits(runId);
+  },
+
+  /** The patch one of those commits introduced. */
+  async runCommitDiff(runId: string, sha: string): Promise<string> {
+    return isDesktop()
+      ? invoke("run_commit_diff", { runId, sha })
+      : mock.runCommitDiff(runId, sha);
   },
 
   /** Start whatever auto-enabled work is ready right now. */
