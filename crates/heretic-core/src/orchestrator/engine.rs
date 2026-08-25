@@ -14,7 +14,7 @@ use crate::paths;
 use crate::prompt::TaskContext;
 use crate::runner::{build_command, run_agent, AgentEvent, AgentOutcome, CancelToken};
 use crate::selection::BoardSnapshot;
-use crate::worktree::{self, ChangeSummary, Worktree};
+use crate::worktree::{self, ChangeSummary, Commit, FileChange, Worktree};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -175,6 +175,9 @@ pub enum EngineError {
 
     #[error("this run left nothing on a branch to land")]
     NothingToLand,
+
+    #[error("this run's work is no longer on disk")]
+    WorkGone,
 }
 
 /// Settle a run that was still in flight when Heretic last closed.
@@ -204,6 +207,14 @@ fn interrupt(run: &mut RunRecord) -> bool {
 
     true
 }
+
+/// How much of a diff to hand the interface. Past this nobody is reading it
+/// line by line, and the renderer would spend longer on it than the agent did.
+const DIFF_LIMIT: usize = 400_000;
+
+/// How far back to read a branch's history. A task-sized run makes a handful of
+/// commits; this only bites on a branch that has been worked for weeks.
+const COMMIT_LIMIT: usize = 200;
 
 /// Owns settings, the Flux connection and every run in flight.
 pub struct Engine {
@@ -724,6 +735,69 @@ impl Engine {
         self.update(run_id, |run| run.landing = Landing::Discarded)
             .await;
         Ok(())
+    }
+
+    // --- Reading what a run did ---------------------------------------------
+
+    /// Every file a run touched, with its line counts.
+    pub async fn run_changed_files(&self, run_id: &str) -> Result<Vec<FileChange>, EngineError> {
+        let scope = self.run_scope(run_id).await?;
+        Ok(worktree::changed_files(&scope).await?)
+    }
+
+    /// One file's diff, as a unified patch.
+    pub async fn run_file_diff(&self, run_id: &str, path: &str) -> Result<String, EngineError> {
+        let scope = self.run_scope(run_id).await?;
+        Ok(worktree::file_diff(&scope, path, DIFF_LIMIT).await?)
+    }
+
+    /// The commits a run put on its branch, newest first.
+    pub async fn run_commits(&self, run_id: &str) -> Result<Vec<Commit>, EngineError> {
+        let scope = self.run_scope(run_id).await?;
+        Ok(worktree::commits(&scope, COMMIT_LIMIT).await?)
+    }
+
+    /// The patch one of those commits introduced.
+    pub async fn run_commit_diff(&self, run_id: &str, sha: &str) -> Result<String, EngineError> {
+        let scope = self.run_scope(run_id).await?;
+        Ok(worktree::commit_diff(&scope.dir, sha, DIFF_LIMIT).await?)
+    }
+
+    /// Where a run's work can be read from.
+    ///
+    /// While the worktree is on disk that is the truth, and it includes work the
+    /// agent has not committed yet. Once a merge has removed the worktree the
+    /// branch is still in the project's own checkout, and reading from there
+    /// keeps a finished run's diff and history browsable rather than blank.
+    async fn run_scope(&self, run_id: &str) -> Result<worktree::DiffScope, EngineError> {
+        let (run, binding) = self.run_with_binding(run_id).await?;
+
+        if run.landing == Landing::Discarded {
+            return Err(EngineError::WorkGone);
+        }
+
+        let base = run
+            .base_branch
+            .clone()
+            .or_else(|| binding.base_branch.clone())
+            .unwrap_or_else(|| "HEAD".to_string());
+
+        if let Some(path) = run.worktree_path.as_deref() {
+            let path = PathBuf::from(path);
+            if path.is_dir() {
+                return Ok(worktree::DiffScope::working_tree(path, base));
+            }
+        }
+
+        match run.branch.as_deref() {
+            Some(branch) if worktree::has_revision(&binding.repo_path, branch).await => {
+                Ok(worktree::DiffScope::branch(binding.repo_path, base, branch))
+            }
+            // An in-place run has no branch of its own: it worked in the
+            // project's checkout, and that is where its changes still are.
+            None => Ok(worktree::DiffScope::working_tree(binding.repo_path, base)),
+            Some(_) => Err(EngineError::WorkGone),
+        }
     }
 
     async fn run_with_binding(

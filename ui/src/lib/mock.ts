@@ -10,7 +10,9 @@ import type {
   BoardView,
   EngineEvent,
   Epic,
+  FileChange,
   Project,
+  RunCommit,
   RunFeedItem,
   RunRecord,
   Settings,
@@ -386,6 +388,119 @@ const RUN_STATS: StageStats[] = [
 
 let runCounter = 0;
 
+/**
+ * The work the scripted run left behind.
+ *
+ * Real diffs come from git; these exist so the Changes and History panels can be
+ * designed and reviewed in a browser, with the same shapes the engine sends.
+ */
+const RUN_FILES: FileChange[] = [
+  { path: "AGENTS.md", status: "added", insertions: 64, deletions: 0, binary: false },
+  { path: ".github/workflows/docs.yml", status: "added", insertions: 31, deletions: 0, binary: false },
+  { path: "docs/README.md", status: "added", insertions: 82, deletions: 0, binary: false },
+  { path: "docs/adr/0001-monorepo-nextjs.md", status: "added", insertions: 46, deletions: 0, binary: false },
+  { path: "docs/adr/0008-llm-gateway.md", status: "modified", insertions: 18, deletions: 3, binary: false },
+  { path: "docs/adr/0012-queueing.md", status: "modified", insertions: 15, deletions: 2, binary: false },
+  { path: "docs/architecture.md", old_path: "ARCHITECTURE.md", status: "renamed", insertions: 4, deletions: 4, binary: false },
+  { path: "docs/assets/pipeline.png", status: "added", insertions: 0, deletions: 0, binary: true },
+  { path: "scratch.md", status: "untracked", insertions: 3, deletions: 0, binary: false },
+];
+
+const DIFFS: Record<string, string> = {
+  "docs/adr/0008-llm-gateway.md": `diff --git a/docs/adr/0008-llm-gateway.md b/docs/adr/0008-llm-gateway.md
+index 3f7a91c..b2c4e08 100644
+--- a/docs/adr/0008-llm-gateway.md
++++ b/docs/adr/0008-llm-gateway.md
+@@ -18,9 +18,12 @@ ## Decision
+ 
+ Route every model call through a single gateway service.
+ 
+-Providers are selected per request.
++Providers are selected per request, and the gateway is the only component
++holding provider credentials.
+ 
+ ## Consequences
+ 
+-TODO
++- One place to add a provider, and one place to rate-limit.
++- The gateway is on the critical path for every feature that calls a model,
++  so it needs the same availability budget as the API itself.
++- Per-provider latency is visible in one dashboard rather than five.
+`,
+  "docs/architecture.md": `diff --git a/ARCHITECTURE.md b/docs/architecture.md
+similarity index 94%
+rename from ARCHITECTURE.md
+rename to docs/architecture.md
+--- a/ARCHITECTURE.md
++++ b/docs/architecture.md
+@@ -1,7 +1,7 @@
+-# Architecture
++# Architecture
+ 
+-See the ADRs in ./adr for the decisions behind this.
++See the ADRs in ./adr for the decisions behind this, indexed in ./README.md.
+ 
+ ## Services
+`,
+  "docs/assets/pipeline.png": `diff --git a/docs/assets/pipeline.png b/docs/assets/pipeline.png
+new file mode 100644
+Binary files /dev/null and b/docs/assets/pipeline.png differ
+`,
+  "scratch.md": `diff --git a/scratch.md b/scratch.md
+new file mode 100644
+--- /dev/null
++++ b/scratch.md
+@@ -0,0 +1,3 @@
++# Scratch
++
++Notes to fold into the ADR index later.
+`,
+};
+
+/** A plausible new-file patch for anything without a hand-written one above. */
+function sampleDiff(file: FileChange): string {
+  const lines = Math.min(file.insertions, 8);
+  const body = Array.from(
+    { length: lines },
+    (_, index) => `+Line ${index + 1} of ${file.path}`,
+  ).join("\n");
+
+  return `diff --git a/${file.path} b/${file.path}
+new file mode 100644
+--- /dev/null
++++ b/${file.path}
+@@ -0,0 +1,${lines} @@
+${body}
+`;
+}
+
+const RUN_COMMITS: RunCommit[] = [
+  {
+    sha: "9c1f4ab7d3e05a6b8c2d1e0f9a8b7c6d5e4f3a2b",
+    short_sha: "9c1f4ab",
+    author: "Heretic",
+    email: "heretic@localhost",
+    authored_at: "2026-08-24T14:41:00Z",
+    subject: "Document the consequences of ADR 0008 and 0012",
+    body: "Review sent the work back: both ADRs stated a decision with no consequences.",
+    files_changed: 2,
+    insertions: 33,
+    deletions: 5,
+  },
+  {
+    sha: "4d2e8bb0a1c93f5e7d6c4b3a2918e7f6d5c4b3a2",
+    short_sha: "4d2e8bb",
+    author: "Heretic",
+    email: "heretic@localhost",
+    authored_at: "2026-08-24T14:22:00Z",
+    subject: "Seed the knowledge base with 15 ADRs",
+    body: "",
+    files_changed: 17,
+    insertions: 1207,
+    deletions: 7,
+  },
+];
+
 /** A simulated engine that streams a scripted run, for developing the UI. */
 export class MockEngine {
   private runs = new Map<string, RunRecord>();
@@ -498,11 +613,14 @@ export class MockEngine {
       run.finished_at = new Date().toISOString();
       run.landing = "on_branch";
       run.stats = structuredClone(RUN_STATS);
+      // Derived from the same fixture the Changes panel reads, so the header
+      // summary and the file list cannot disagree the way they would if both
+      // were written out by hand.
       run.changes = {
-        files_changed: 18,
-        insertions: 1240,
-        deletions: 12,
-        files: ["AGENTS.md", "docs/README.md", "docs/adr/0001-monorepo-nextjs.md"],
+        files_changed: RUN_FILES.length,
+        insertions: RUN_FILES.reduce((sum, file) => sum + file.insertions, 0),
+        deletions: RUN_FILES.reduce((sum, file) => sum + file.deletions, 0),
+        files: RUN_FILES.map((file) => file.path),
       };
       this.emit({ kind: "run_updated", run: structuredClone(run) });
       return;
@@ -550,5 +668,41 @@ export class MockEngine {
     if (!run || run.status === "running") return false;
     this.runs.delete(runId);
     return true;
+  }
+
+  // --- What the run left in the repository ---------------------------------
+
+  runChangedFiles(runId: string): FileChange[] {
+    // Nothing is on disk until the implementer has been through once.
+    const run = this.runs.get(runId);
+    if (!run) return [];
+    const reached = run.feed.some((item) => item.stage !== "planning");
+    return reached ? structuredClone(RUN_FILES) : [];
+  }
+
+  runFileDiff(_runId: string, path: string): string {
+    const written = DIFFS[path];
+    if (written) return written;
+    const file = RUN_FILES.find((candidate) => candidate.path === path);
+    return file ? sampleDiff(file) : "";
+  }
+
+  runCommits(runId: string): RunCommit[] {
+    // A run commits when it finishes, so a live one has no history yet.
+    const run = this.runs.get(runId);
+    if (!run || run.status === "running" || run.status === "queued") return [];
+    return structuredClone(RUN_COMMITS);
+  }
+
+  runCommitDiff(_runId: string, sha: string): string {
+    const first = RUN_COMMITS[0];
+    if (first && sha === first.sha) {
+      return [DIFFS["docs/adr/0008-llm-gateway.md"] ?? ""].join("\n");
+    }
+    return [
+      DIFFS["docs/architecture.md"] ?? "",
+      sampleDiff(RUN_FILES[0]!),
+      sampleDiff(RUN_FILES[2]!),
+    ].join("\n");
   }
 }

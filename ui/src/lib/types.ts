@@ -304,6 +304,57 @@ export interface ChangeSummary {
   files: string[];
 }
 
+/** What happened to one file in a run's diff. */
+export type ChangeStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  /** Written but never added to git — it exists only in the working tree. */
+  | "untracked";
+
+export interface FileChange {
+  path: string;
+  /** Where a renamed file came from. */
+  old_path?: string | null;
+  status: ChangeStatus;
+  insertions: number;
+  deletions: number;
+  /** Binary files have no line counts and no readable diff. */
+  binary: boolean;
+}
+
+/** A commit on a run's branch. */
+export interface RunCommit {
+  sha: string;
+  short_sha: string;
+  author: string;
+  email: string;
+  authored_at: string;
+  subject: string;
+  body: string;
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+}
+
+export const CHANGE_STATUS_LABELS: Record<ChangeStatus, string> = {
+  added: "Added",
+  modified: "Modified",
+  deleted: "Deleted",
+  renamed: "Renamed",
+  untracked: "New, uncommitted",
+};
+
+/** The single letter git itself uses, for the gutter beside a path. */
+export const CHANGE_STATUS_LETTERS: Record<ChangeStatus, string> = {
+  added: "A",
+  modified: "M",
+  deleted: "D",
+  renamed: "R",
+  untracked: "U",
+};
+
 export interface RunRecord {
   id: string;
   project_id: string;
