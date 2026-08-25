@@ -1,3 +1,9 @@
+## [0.4.0](https://github.com/sirsjg/heretic/compare/v0.3.1...v0.4.0) (2026-08-25)
+
+### Features
+
+* **runs:** review a run's diff and history without leaving the app ([f080623](https://github.com/sirsjg/heretic/commit/f0806234873d895e65b402f64b337bcffa2e882a))
+
 ## [0.3.1](https://github.com/sirsjg/heretic/compare/v0.3.0...v0.3.1) (2026-08-24)
 
 ### Bug Fixes
