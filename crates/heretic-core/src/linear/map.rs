@@ -127,9 +127,17 @@ pub(crate) struct RawRelation {
     #[serde(rename = "type", default)]
     pub relation_type: String,
     /// On an inverse relation this is the *other* issue — the one doing the
-    /// blocking.
+    /// blocking. Its state comes along so a finished blocker can be told
+    /// apart from an open one without fetching it separately.
     #[serde(default)]
-    pub issue: Option<IdOnly>,
+    pub issue: Option<RelatedIssue>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct RelatedIssue {
+    pub id: String,
+    #[serde(default)]
+    pub state: Option<RawStateRef>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -267,12 +275,24 @@ pub(crate) fn task_from_issue(issue: RawIssue, team_id: &str) -> Task {
 
     let sections = parse_description(issue.description.as_deref().unwrap_or(""));
 
+    // Only *open* blockers become dependencies. The selector resolves ids
+    // against the one team it fetched, but a blocker can live in another
+    // team, be auto-archived, or sit past the pagination cap — where an id
+    // it never sees would block its dependent forever. Judging the blocker
+    // by the state it carries here works wherever it lives.
     let depends_on = issue
         .inverse_relations
         .nodes
         .iter()
         .filter(|r| r.relation_type == "blocks")
-        .filter_map(|r| r.issue.as_ref().map(|i| i.id.clone()))
+        .filter_map(|r| r.issue.as_ref())
+        .filter(|blocker| {
+            !matches!(
+                blocker.state.as_ref().and_then(|s| s.state_type.as_deref()),
+                Some("completed") | Some("canceled")
+            )
+        })
+        .map(|blocker| blocker.id.clone())
         .collect();
 
     let comments = issue
@@ -469,7 +489,8 @@ mod tests {
                   "user": { "displayName": "Ada" } }
             ] },
             "inverseRelations": { "nodes": [
-                { "type": "blocks", "issue": { "id": "blocker-1" } },
+                { "type": "blocks", "issue": { "id": "blocker-1", "state": { "type": "started" } } },
+                { "type": "blocks", "issue": { "id": "finished-blocker", "state": { "type": "completed" } } },
                 { "type": "related", "issue": { "id": "unrelated-1" } }
             ] }
         })
@@ -487,7 +508,9 @@ mod tests {
         assert_eq!(task.epic_id.as_deref(), Some("proj-epic-1"));
         assert_eq!(task.priority, Some(Priority::P0));
 
-        // Only the blocking relation becomes a dependency.
+        // Only *open* blocking relations become dependencies: the finished
+        // blocker may live in a team the selector never fetches, where its id
+        // would read as forever-unfinished.
         assert_eq!(task.depends_on, vec!["blocker-1"]);
 
         assert_eq!(
