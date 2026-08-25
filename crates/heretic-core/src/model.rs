@@ -6,6 +6,29 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Which tracker a project (and everything under it) comes from.
+///
+/// Stamped onto [`Project`] so the interface can route commands back to the
+/// right source, and stored on each project binding. Flux is the default so
+/// settings and API payloads written before this field existed keep meaning
+/// what they meant.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    #[default]
+    Flux,
+    Linear,
+}
+
+impl SourceKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            SourceKind::Flux => "Flux",
+            SourceKind::Linear => "Linear",
+        }
+    }
+}
+
 /// Where a task sits on the board.
 ///
 /// Flux enforces one transition rule that Heretic must respect: a task in
@@ -98,6 +121,10 @@ pub struct Project {
     pub description: Option<String>,
     #[serde(default)]
     pub visibility: Option<String>,
+    /// Which tracker this project lives on. Flux servers never send the field,
+    /// so the default keeps their payloads meaning what they always meant.
+    #[serde(default)]
+    pub source: SourceKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
