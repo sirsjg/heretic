@@ -112,6 +112,11 @@ export function Sidebar() {
               >
                 {project.name}
               </span>
+              {project.source === "linear" && (
+                <Badge tone="neutral" title="This project comes from Linear">
+                  Linear
+                </Badge>
+              )}
               {binding?.auto_run && (
                 <Badge tone="accent" title="Auto-run is on for this project">
                   Auto

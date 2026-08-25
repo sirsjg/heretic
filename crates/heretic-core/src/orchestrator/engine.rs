@@ -3,17 +3,19 @@
 
 use super::pipeline::{execute_run, RunConfig};
 use super::types::{
-    AgentExecutor, Board, BoardError, Landing, RunFeedItem, RunProgress, RunRecord, RunResult,
-    RunStage, RunStatus, Workspace,
+    AgentExecutor, BoardError, Landing, RunFeedItem, RunProgress, RunRecord, RunResult, RunStage,
+    RunStatus, Workspace,
 };
 use crate::config::{Integration, Isolation, ModelProfile, ProjectBinding, Role, Settings};
 use crate::flux::{FluxClient, FluxError};
 use crate::history::RunHistory;
-use crate::model::{Task, TaskStatus};
+use crate::linear::LinearClient;
+use crate::model::{SourceKind, Task};
 use crate::paths;
 use crate::prompt::TaskContext;
 use crate::runner::{build_command, run_agent, AgentEvent, AgentOutcome, CancelToken};
 use crate::selection::BoardSnapshot;
+use crate::source::{SourceBoard, SourceError, TaskSource};
 use crate::worktree::{self, ChangeSummary, Commit, FileChange, Worktree};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -22,12 +24,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
-impl From<FluxError> for BoardError {
-    fn from(error: FluxError) -> Self {
-        BoardError(error.to_string())
-    }
-}
-
 impl From<worktree::GitError> for BoardError {
     fn from(error: worktree::GitError) -> Self {
         BoardError(error.to_string())
@@ -35,45 +31,6 @@ impl From<worktree::GitError> for BoardError {
 }
 
 // --- Real trait implementations ---------------------------------------------
-
-/// A Flux-backed board.
-struct FluxBoard {
-    client: FluxClient,
-}
-
-#[async_trait::async_trait]
-impl Board for FluxBoard {
-    async fn move_status(
-        &self,
-        task_id: &str,
-        status: TaskStatus,
-        agent_name: Option<&str>,
-    ) -> Result<(), BoardError> {
-        self.client
-            .move_task_status(task_id, status, agent_name)
-            .await?;
-        Ok(())
-    }
-
-    async fn comment(
-        &self,
-        task_id: &str,
-        body: &str,
-        agent_name: Option<&str>,
-    ) -> Result<(), BoardError> {
-        self.client.add_comment(task_id, body, agent_name).await?;
-        Ok(())
-    }
-
-    async fn set_blocked_reason(
-        &self,
-        task_id: &str,
-        reason: Option<&str>,
-    ) -> Result<(), BoardError> {
-        self.client.set_blocked_reason(task_id, reason).await?;
-        Ok(())
-    }
-}
 
 /// A checkout on disk — either a dedicated worktree or the project directory itself.
 struct GitWorkspace {
@@ -162,7 +119,7 @@ pub enum EngineError {
     NotBound(String),
 
     #[error("{0}")]
-    Flux(#[from] FluxError),
+    Source(#[from] SourceError),
 
     #[error("{0}")]
     Git(#[from] worktree::GitError),
@@ -269,6 +226,27 @@ impl Engine {
         FluxClient::new(self.settings.read().await.flux.clone())
     }
 
+    /// Build the client for one tracker from the given settings.
+    pub fn source_for(
+        settings: &Settings,
+        kind: SourceKind,
+    ) -> Result<Arc<dyn TaskSource>, SourceError> {
+        match kind {
+            SourceKind::Flux => Ok(Arc::new(
+                FluxClient::new(settings.flux.clone()).map_err(SourceError::from)?,
+            )),
+            SourceKind::Linear => {
+                let config = settings.linear.clone().unwrap_or_default();
+                Ok(Arc::new(LinearClient::new(config)?))
+            }
+        }
+    }
+
+    /// The client for one tracker, from the current settings.
+    pub async fn source(&self, kind: SourceKind) -> Result<Arc<dyn TaskSource>, SourceError> {
+        Self::source_for(&self.settings.read().await.clone(), kind)
+    }
+
     /// Every run, newest first.
     pub async fn runs(&self) -> Vec<RunRecord> {
         let mut runs: Vec<RunRecord> = self.runs.read().await.values().cloned().collect();
@@ -354,12 +332,12 @@ impl Engine {
             .cloned()
             .ok_or_else(|| EngineError::NotBound(project_id.to_string()))?;
 
-        let client = FluxClient::new(settings.flux.clone())?;
-        let task = client.get_task(task_id).await?;
-        let project = client.get_project(project_id).await?;
+        let source = Self::source_for(&settings, binding.source)?;
+        let task = source.get_task(task_id).await?;
+        let project = source.get_project(project_id).await?;
 
         let (epic_title, epic_notes) = match task.epic_id.as_deref().filter(|id| !id.is_empty()) {
-            Some(epic_id) => match client.get_epic(epic_id).await {
+            Some(epic_id) => match source.get_epic(epic_id).await {
                 Ok(epic) => (epic.title, epic.notes),
                 Err(_) => (String::new(), String::new()),
             },
@@ -430,7 +408,7 @@ impl Engine {
         let run_id_for_task = run_id.clone();
         tokio::spawn(async move {
             engine
-                .drive_run(run_id_for_task, context, binding, config, client, cancel)
+                .drive_run(run_id_for_task, context, binding, config, source, cancel)
                 .await;
         });
 
@@ -444,7 +422,7 @@ impl Engine {
         context: TaskContext,
         binding: ProjectBinding,
         config: RunConfig,
-        client: FluxClient,
+        source: Arc<dyn TaskSource>,
         cancel: CancelToken,
     ) {
         let task_id = context.task.id.clone();
@@ -467,7 +445,7 @@ impl Engine {
                 )
                 .await;
                 // The task was never claimed, so only the blocker needs recording.
-                let _ = client
+                let _ = source
                     .set_blocked_reason(&task_id, Some(&format!("Heretic: {error}")))
                     .await;
                 return;
@@ -493,7 +471,7 @@ impl Engine {
             }
         });
 
-        let board = FluxBoard { client };
+        let board = SourceBoard(source);
         let executor = CliExecutor;
         let outcome = execute_run(context, config, &board, &workspace, &executor, cancel, tx).await;
         let _ = relay.await;
@@ -822,13 +800,25 @@ impl Engine {
     /// respecting each project's parallelism. Returns the run ids started.
     pub async fn tick_auto(self: &Arc<Self>) -> Vec<String> {
         let settings = self.settings.read().await.clone();
-        let Ok(client) = FluxClient::new(settings.flux.clone()) else {
-            return Vec::new();
-        };
 
+        // One client per tracker, shared across that tracker's bindings.
+        let mut sources: HashMap<SourceKind, Arc<dyn TaskSource>> = HashMap::new();
         let mut started = Vec::new();
 
         for binding in settings.bindings.iter().filter(|b| b.auto_run) {
+            let source = match sources.get(&binding.source) {
+                Some(source) => Arc::clone(source),
+                None => match Self::source_for(&settings, binding.source) {
+                    Ok(source) => {
+                        sources.insert(binding.source, Arc::clone(&source));
+                        source
+                    }
+                    // An unconfigured or misconfigured tracker skips its own
+                    // bindings without holding up the others.
+                    Err(_) => continue,
+                },
+            };
+
             let capacity = binding
                 .effective_parallelism()
                 .saturating_sub(self.active_runs_for_project(&binding.project_id).await as u32);
@@ -836,7 +826,7 @@ impl Engine {
                 continue;
             }
 
-            let epics = match client.list_epics(&binding.project_id).await {
+            let epics = match source.list_epics(&binding.project_id).await {
                 Ok(epics) => epics,
                 Err(error) => {
                     // Say why. "Could not read the board" on its own leaves the
@@ -849,7 +839,7 @@ impl Engine {
                     continue;
                 }
             };
-            let tasks = match client.list_tasks(&binding.project_id).await {
+            let tasks = match source.list_tasks(&binding.project_id).await {
                 Ok(tasks) => tasks,
                 Err(error) => {
                     self.emit(EngineEvent::Notice {

@@ -29,11 +29,21 @@ export const ROLE_BLURBS: Record<Role, string> = {
   documenter: "Updates the docs once the work is approved.",
 };
 
+/** Which tracker a project (and everything under it) comes from. */
+export type SourceKind = "flux" | "linear";
+
+export const SOURCE_LABELS: Record<SourceKind, string> = {
+  flux: "Flux",
+  linear: "Linear",
+};
+
 export interface Project {
   id: string;
   name: string;
   description?: string | null;
   visibility?: string | null;
+  /** Absent in older payloads and the mock; absent means Flux. */
+  source?: SourceKind;
 }
 
 export interface Epic {
@@ -129,6 +139,8 @@ export interface Pipeline {
 
 export interface ProjectBinding {
   project_id: string;
+  /** Which tracker the project lives on. Absent means Flux. */
+  source?: SourceKind;
   repo_path: string;
   base_branch?: string | null;
   isolation: Isolation;
@@ -148,8 +160,28 @@ export interface FluxConfig {
   cookie?: string | null;
 }
 
+export interface LinearConfig {
+  /** A personal API key (`lin_api_…`). */
+  api_key?: string | null;
+  /** The GraphQL endpoint; only ever changed to point tests at a stub. */
+  base_url: string;
+  /** Epic ids (Linear project ids) whose tasks may run unattended. */
+  auto_epics: string[];
+}
+
+/** A blank Linear connection, for when settings predate the field. */
+export function emptyLinearConfig(): LinearConfig {
+  return {
+    api_key: null,
+    base_url: "https://api.linear.app/graphql",
+    auto_epics: [],
+  };
+}
+
 export interface Settings {
   flux: FluxConfig;
+  /** The Linear connection, when one is configured. */
+  linear?: LinearConfig | null;
   profiles: ModelProfile[];
   roles: Partial<Record<Role, string>>;
   bindings: ProjectBinding[];
@@ -405,7 +437,13 @@ export interface ConnectionState {
   /** Populated when the server rejected us or could not be reached. */
   error?: string | null;
   /** Which layer failed, so the interface can point at the right fix. */
-  kind?: "ok" | "flux_auth" | "proxy_challenge" | "unreachable";
+  kind?:
+    | "ok"
+    | "flux_auth"
+    | "linear_auth"
+    | "proxy_challenge"
+    | "unreachable"
+    | "unconfigured";
   /** Configuration that will bite later, even when the connection works. */
   warnings?: string[];
 }

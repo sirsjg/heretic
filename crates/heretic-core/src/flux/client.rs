@@ -369,6 +369,90 @@ impl FluxClient {
     }
 }
 
+impl From<FluxError> for crate::source::SourceError {
+    fn from(error: FluxError) -> Self {
+        use crate::source::{SourceError, SourceErrorKind};
+        let kind = if error.is_not_found() {
+            SourceErrorKind::NotFound
+        } else if error.is_auth() || error.is_proxy_challenge() {
+            SourceErrorKind::Auth
+        } else {
+            match &error {
+                FluxError::Transport(_) => SourceErrorKind::Transport,
+                FluxError::Decode(_) => SourceErrorKind::Decode,
+                _ => SourceErrorKind::Api,
+            }
+        };
+        SourceError::new(kind, error.to_string())
+    }
+}
+
+/// Flux speaks the canonical model natively, so this is pure delegation.
+#[async_trait::async_trait]
+impl crate::source::TaskSource for FluxClient {
+    fn kind(&self) -> crate::model::SourceKind {
+        crate::model::SourceKind::Flux
+    }
+
+    async fn list_projects(&self) -> crate::source::Result<Vec<Project>> {
+        Ok(FluxClient::list_projects(self).await?)
+    }
+
+    async fn get_project(&self, project_id: &str) -> crate::source::Result<Project> {
+        Ok(FluxClient::get_project(self, project_id).await?)
+    }
+
+    async fn list_epics(&self, project_id: &str) -> crate::source::Result<Vec<Epic>> {
+        Ok(FluxClient::list_epics(self, project_id).await?)
+    }
+
+    async fn get_epic(&self, epic_id: &str) -> crate::source::Result<Epic> {
+        Ok(FluxClient::get_epic(self, epic_id).await?)
+    }
+
+    async fn set_epic_auto(&self, epic_id: &str, auto: bool) -> crate::source::Result<()> {
+        FluxClient::set_epic_auto(self, epic_id, auto).await?;
+        Ok(())
+    }
+
+    async fn list_tasks(&self, project_id: &str) -> crate::source::Result<Vec<Task>> {
+        Ok(FluxClient::list_tasks(self, project_id).await?)
+    }
+
+    async fn get_task(&self, task_id: &str) -> crate::source::Result<Task> {
+        Ok(FluxClient::get_task(self, task_id).await?)
+    }
+
+    async fn move_status(
+        &self,
+        task_id: &str,
+        status: TaskStatus,
+        agent_name: Option<&str>,
+    ) -> crate::source::Result<()> {
+        self.move_task_status(task_id, status, agent_name).await?;
+        Ok(())
+    }
+
+    async fn comment(
+        &self,
+        task_id: &str,
+        body: &str,
+        agent_name: Option<&str>,
+    ) -> crate::source::Result<()> {
+        self.add_comment(task_id, body, agent_name).await?;
+        Ok(())
+    }
+
+    async fn set_blocked_reason(
+        &self,
+        task_id: &str,
+        reason: Option<&str>,
+    ) -> crate::source::Result<()> {
+        FluxClient::set_blocked_reason(self, task_id, reason).await?;
+        Ok(())
+    }
+}
+
 /// Decide whether a response came from an identity proxy rather than Flux.
 ///
 /// Two shapes matter. A proxy may reject outright (401/403 with an HTML body),

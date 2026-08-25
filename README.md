@@ -256,6 +256,33 @@ pnpm tauri icon crates/heretic-app/icons/icon-1024.png
    Code for planning and review, and a local Qwen through Codex for the rest.
 4. **Switch Auto on** for an epic, either here or in Flux itself.
 
+### Working from Linear (experimental)
+
+Flux is Heretic's native board, but the engine only ever needed *a* board —
+so a Linear workspace can sit alongside it. Settings → **Linear**, paste a
+personal API key, and every team in the workspace appears in the sidebar as a
+project tagged *Linear*, with the same folder / models / Auto setup as any
+other project.
+
+The vocabulary shifts one level on the way in: a Linear **team** becomes a
+project, a Linear **project** becomes an epic, an **issue** becomes a task.
+Workflow states map by their type (backlog → Planning, unstarted → Todo,
+started → In Progress, completed → Done), so renamed columns keep working.
+Blocking relations become dependencies, and `## Acceptance criteria` and
+`## Guardrails` sections in an issue's description are lifted into the same
+prompt slots a Flux task's would fill.
+
+Two things Linear has no field for are handled Heretic's way:
+
+- **Auto** on a Linear epic is Heretic's own switch, stored in settings — it
+  is not visible in Linear itself.
+- A failed run leaves its **blocker** as a comment and moves the issue back
+  to the backlog, which keeps the auto loop from retrying it until a human
+  triages.
+
+Status changes and run summaries are written back as the API key's user, with
+the agent named in the comment body.
+
 ### Finding what you can run
 
 **Models & roles → What's available** scans for:
@@ -490,7 +517,9 @@ to anything other than localhost.
 
 ```
 crates/heretic-core/   the engine — no UI framework anywhere in it
+  source/              the tracker seam: what any board must provide
   flux/                REST client and the SSE watcher
+  linear/              GraphQL client, mapping teams/projects/issues in
   selection.rs         what may run unattended, and why something may not
   runner/              per-backend argv, process supervision, output parsing
   worktree.rs          git worktrees, diffs, commits, merges

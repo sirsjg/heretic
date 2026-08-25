@@ -89,6 +89,7 @@ export function BoardView() {
     if (!path || !board) return;
     await saveBinding({
       project_id: board.project.id,
+      source: board.project.source ?? "flux",
       repo_path: path,
       base_branch: null,
       isolation: "worktree",

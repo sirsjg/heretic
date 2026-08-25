@@ -6,6 +6,8 @@
 
 use crate::detect::ModelHost;
 use crate::flux::FluxConfig;
+use crate::linear::LinearConfig;
+use crate::model::SourceKind;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -209,6 +211,10 @@ impl Default for Pipeline {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectBinding {
     pub project_id: String,
+    /// Which tracker the project lives on. Bindings saved before other
+    /// sources existed carry no field and stay Flux.
+    #[serde(default)]
+    pub source: SourceKind,
     /// Absolute path to the git repository.
     pub repo_path: PathBuf,
     /// Branch new work forks from. `None` means the repository's current HEAD.
@@ -239,6 +245,7 @@ impl ProjectBinding {
     pub fn new(project_id: impl Into<String>, repo_path: impl Into<PathBuf>) -> Self {
         Self {
             project_id: project_id.into(),
+            source: SourceKind::default(),
             repo_path: repo_path.into(),
             base_branch: None,
             isolation: Isolation::default(),
@@ -265,6 +272,10 @@ impl ProjectBinding {
 pub struct Settings {
     #[serde(default)]
     pub flux: FluxConfig,
+    /// The Linear connection, when one is configured. One API key covers a
+    /// whole workspace, so a single entry is enough.
+    #[serde(default)]
+    pub linear: Option<LinearConfig>,
     #[serde(default)]
     pub profiles: Vec<ModelProfile>,
     /// Default role -> profile id bindings, used when a project does not override.
@@ -286,6 +297,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             flux: FluxConfig::default(),
+            linear: None,
             profiles: Vec::new(),
             roles: BTreeMap::new(),
             bindings: Vec::new(),
@@ -329,11 +341,17 @@ impl Settings {
 
         Self {
             flux: FluxConfig::default(),
+            linear: None,
             profiles: vec![claude, qwen],
             roles,
             bindings: Vec::new(),
             hosts: default_hosts(),
         }
+    }
+
+    /// Whether a Linear workspace is connected.
+    pub fn linear_enabled(&self) -> bool {
+        self.linear.as_ref().is_some_and(LinearConfig::enabled)
     }
 
     /// Insert or replace a model host.

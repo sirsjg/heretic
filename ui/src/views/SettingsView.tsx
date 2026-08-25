@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useStore, currentBinding } from "../lib/store";
-import type { Settings } from "../lib/types";
+import type { ConnectionState, Settings } from "../lib/types";
+import { emptyLinearConfig } from "../lib/types";
 import { api } from "../lib/bridge";
 import {
   Badge,
@@ -122,6 +123,14 @@ export function SettingsView() {
             }}
             onRecheck={() => void reconnect()}
             onNotify={notify}
+          />
+
+          <LinearPanel
+            draft={draft}
+            saved={settings}
+            setDraft={setDraft}
+            saveSettings={saveSettings}
+            reloadProjects={reconnect}
           />
 
           {binding && board ? (
@@ -294,6 +303,104 @@ export function SettingsView() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The Linear connection. One personal API key covers a whole workspace; its
+ * teams appear in the sidebar as projects alongside Flux's.
+ */
+function LinearPanel({
+  draft,
+  saved,
+  setDraft,
+  saveSettings,
+  reloadProjects,
+}: {
+  draft: Settings;
+  saved: Settings | null;
+  setDraft: (next: Settings) => void;
+  saveSettings: (next: Settings) => Promise<void>;
+  reloadProjects: () => Promise<void>;
+}) {
+  const [status, setStatus] = useState<ConnectionState | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  const linear = draft.linear ?? emptyLinearConfig();
+  const configured = Boolean(linear.api_key);
+  const dirty =
+    JSON.stringify(draft.linear ?? null) !== JSON.stringify(saved?.linear ?? null);
+
+  async function test() {
+    setTesting(true);
+    try {
+      setStatus(await api.testLinearConnection());
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <Panel
+      title="Linear"
+      description="Optional. Connect a workspace and its teams appear as projects, their issues as tasks."
+      actions={
+        status ? (
+          <span className="flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)]">
+            <Dot tone={status.connected ? "success" : "danger"} />
+            {status.connected ? "Connected" : "Not connected"}
+          </span>
+        ) : undefined
+      }
+    >
+      <div className="grid gap-3 px-4 py-4 sm:grid-cols-2">
+        <Field
+          label="API key"
+          hint="A personal API key from Linear's Settings → Security & access. Leave empty to disconnect."
+        >
+          <Input
+            type="password"
+            value={linear.api_key ?? ""}
+            placeholder="lin_api_…"
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                linear: { ...linear, api_key: e.target.value || null },
+              })
+            }
+          />
+        </Field>
+
+        <div className="flex items-end gap-2">
+          <Button
+            variant="primary"
+            disabled={!dirty}
+            onClick={async () => {
+              await saveSettings(draft);
+              await test();
+              await reloadProjects();
+            }}
+          >
+            Save
+          </Button>
+          <Button disabled={!configured || testing} onClick={() => void test()}>
+            Test connection
+          </Button>
+        </div>
+
+        {status?.error && (
+          <span className="text-[11.5px] sm:col-span-2" style={{ color: "var(--danger)" }}>
+            {status.error}
+          </span>
+        )}
+
+        <p className="text-[11.5px] leading-snug text-[var(--text-muted)] sm:col-span-2">
+          Linear has no Auto flag of its own, so the switch on a Linear epic is
+          Heretic's — stored here in settings, not visible in Linear. Blocked
+          tasks are recorded as a comment and moved back to the backlog.
+        </p>
+      </div>
+    </Panel>
   );
 }
 

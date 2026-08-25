@@ -7,11 +7,11 @@
 use crate::state::AppState;
 use heretic_core::config::{ProjectBinding, Settings};
 use heretic_core::detect::{self, CliStatus, HostProbe, ModelHost};
-use heretic_core::model::{Epic, Project, Task};
+use heretic_core::model::{Epic, Project, SourceKind, Task};
 use heretic_core::orchestrator::RunRecord;
 use heretic_core::selection::BoardSnapshot;
 use heretic_core::worktree::{Commit, FileChange};
-use heretic_core::FluxClient;
+use heretic_core::{Engine, FluxClient, LinearClient, TaskSource};
 use serde::Serialize;
 use std::collections::HashSet;
 use tauri::{Manager, State};
@@ -55,6 +55,21 @@ pub struct ConnectionState {
 async fn client(state: &State<'_, AppState>) -> Response<FluxClient> {
     let settings = state.engine.settings().await;
     FluxClient::new(settings.flux).map_err(|error| error.to_string())
+}
+
+/// The client for one project's tracker. `source` comes from the interface
+/// (which knows where a project was listed from); a saved binding is the
+/// fallback, and Flux the default, so pre-existing callers keep working.
+async fn source_client(
+    state: &State<'_, AppState>,
+    project_id: &str,
+    source: Option<SourceKind>,
+) -> Response<std::sync::Arc<dyn TaskSource>> {
+    let settings = state.engine.settings().await;
+    let kind = source
+        .or_else(|| settings.binding(project_id).map(|b| b.source))
+        .unwrap_or_default();
+    Engine::source_for(&settings, kind).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -153,18 +168,51 @@ public projects are visible. Create a key at {base}/auth and paste it above."
     }
 }
 
+/// Projects from every configured tracker, each stamped with its source.
+///
+/// One tracker failing must not blank the other's board, so failures are only
+/// fatal when nothing could be listed at all; the per-tracker connection tests
+/// in Settings are where a broken credential gets diagnosed.
 #[tauri::command]
 pub async fn list_projects(state: State<'_, AppState>) -> Response<Vec<Project>> {
-    client(&state)
-        .await?
-        .list_projects()
-        .await
-        .map_err(|error| error.to_string())
+    let settings = state.engine.settings().await;
+
+    let mut projects: Vec<Project> = Vec::new();
+    let mut failures: Vec<String> = Vec::new();
+
+    match client(&state).await {
+        Ok(flux) => match flux.list_projects().await {
+            Ok(mut listed) => projects.append(&mut listed),
+            Err(error) => failures.push(error.to_string()),
+        },
+        Err(error) => failures.push(error),
+    }
+
+    if settings.linear_enabled() {
+        match LinearClient::new(settings.linear.clone().unwrap_or_default()) {
+            Ok(linear) => match TaskSource::list_projects(&linear).await {
+                Ok(mut listed) => projects.append(&mut listed),
+                Err(error) => failures.push(error.to_string()),
+            },
+            Err(error) => failures.push(error.to_string()),
+        }
+    }
+
+    if projects.is_empty() {
+        if let Some(failure) = failures.into_iter().next() {
+            return Err(failure);
+        }
+    }
+    Ok(projects)
 }
 
 #[tauri::command]
-pub async fn get_board(state: State<'_, AppState>, project_id: String) -> Response<BoardView> {
-    let client = client(&state).await?;
+pub async fn get_board(
+    state: State<'_, AppState>,
+    project_id: String,
+    source: Option<SourceKind>,
+) -> Response<BoardView> {
+    let client = source_client(&state, &project_id, source).await?;
 
     let (project, epics, tasks) = tokio::try_join!(
         client.get_project(&project_id),
@@ -201,20 +249,89 @@ pub async fn get_board(state: State<'_, AppState>, project_id: String) -> Respon
     })
 }
 
-/// Flip an epic's Auto switch. This writes to Flux, so the change is visible on
-/// the board and to anything else watching it.
+/// Flip an epic's Auto switch.
+///
+/// On Flux this writes to the server, so the change is visible on the board
+/// and to anything else watching it. Linear has no such field, so the flag is
+/// Heretic's own, kept in settings alongside the connection.
 #[tauri::command]
 pub async fn set_epic_auto(
     state: State<'_, AppState>,
     epic_id: String,
     auto: bool,
+    source: Option<SourceKind>,
 ) -> Response<()> {
-    client(&state)
-        .await?
-        .set_epic_auto(&epic_id, auto)
-        .await
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    match source.unwrap_or_default() {
+        SourceKind::Flux => client(&state)
+            .await?
+            .set_epic_auto(&epic_id, auto)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
+        SourceKind::Linear => {
+            let mut settings = state.engine.settings().await;
+            let linear = settings.linear.get_or_insert_with(Default::default);
+            if auto {
+                if !linear.auto_epics.contains(&epic_id) {
+                    linear.auto_epics.push(epic_id);
+                }
+            } else {
+                linear.auto_epics.retain(|id| id != &epic_id);
+            }
+            state
+                .store
+                .save(&settings)
+                .map_err(|error| error.to_string())?;
+            state.engine.set_settings(settings).await;
+            Ok(())
+        }
+    }
+}
+
+/// Exercise the Linear connection: one authenticated whoami round trip.
+#[tauri::command]
+pub async fn test_linear_connection(state: State<'_, AppState>) -> Response<ConnectionState> {
+    let settings = state.engine.settings().await;
+
+    if !settings.linear_enabled() {
+        return Ok(ConnectionState {
+            connected: false,
+            error: Some("No Linear API key is set.".into()),
+            kind: "unconfigured",
+            warnings: Vec::new(),
+        });
+    }
+
+    let client = match LinearClient::new(settings.linear.clone().unwrap_or_default()) {
+        Ok(client) => client,
+        Err(error) => {
+            return Ok(ConnectionState {
+                connected: false,
+                error: Some(error.to_string()),
+                kind: "unreachable",
+                warnings: Vec::new(),
+            })
+        }
+    };
+
+    match client.viewer_name().await {
+        Ok(_) => Ok(ConnectionState {
+            connected: true,
+            error: None,
+            kind: "ok",
+            warnings: Vec::new(),
+        }),
+        Err(error) => Ok(ConnectionState {
+            connected: false,
+            error: Some(error.to_string()),
+            kind: if error.is_auth() {
+                "linear_auth"
+            } else {
+                "unreachable"
+            },
+            warnings: Vec::new(),
+        }),
+    }
 }
 
 #[tauri::command]

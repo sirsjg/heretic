@@ -20,6 +20,7 @@ import type {
   RunCommit,
   RunRecord,
   Settings,
+  SourceKind,
 } from "./types";
 import { MockEngine } from "./mock";
 
@@ -39,14 +40,18 @@ export const api = {
     return isDesktop() ? invoke("list_projects") : mock.listProjects();
   },
 
-  async board(projectId: string): Promise<BoardView> {
+  async board(projectId: string, source?: SourceKind): Promise<BoardView> {
     return isDesktop()
-      ? invoke("get_board", { projectId })
+      ? invoke("get_board", { projectId, source })
       : mock.board(projectId);
   },
 
-  async setEpicAuto(epicId: string, auto: boolean): Promise<void> {
-    if (isDesktop()) return invoke("set_epic_auto", { epicId, auto });
+  async setEpicAuto(
+    epicId: string,
+    auto: boolean,
+    source?: SourceKind,
+  ): Promise<void> {
+    if (isDesktop()) return invoke("set_epic_auto", { epicId, auto, source });
     mock.setEpicAuto(epicId, auto);
   },
 
@@ -73,6 +78,13 @@ export const api = {
   async testConnection(): Promise<ConnectionState> {
     return isDesktop()
       ? invoke("test_connection")
+      : { connected: true, error: null };
+  },
+
+  /** One authenticated whoami round trip against Linear. */
+  async testLinearConnection(): Promise<ConnectionState> {
+    return isDesktop()
+      ? invoke("test_linear_connection")
       : { connected: true, error: null };
   },
 

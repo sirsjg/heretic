@@ -99,6 +99,7 @@ pub fn run() {
             commands::save_settings,
             commands::save_binding,
             commands::test_connection,
+            commands::test_linear_connection,
             commands::list_projects,
             commands::get_board,
             commands::set_epic_auto,
