@@ -242,11 +242,6 @@ impl Engine {
         }
     }
 
-    /// The client for one tracker, from the current settings.
-    pub async fn source(&self, kind: SourceKind) -> Result<Arc<dyn TaskSource>, SourceError> {
-        Self::source_for(&self.settings.read().await.clone(), kind)
-    }
-
     /// Every run, newest first.
     pub async fn runs(&self) -> Vec<RunRecord> {
         let mut runs: Vec<RunRecord> = self.runs.read().await.values().cloned().collect();

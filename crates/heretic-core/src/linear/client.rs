@@ -218,7 +218,7 @@ const ISSUE_FIELDS: &str =
     "id identifier title description priority createdAt updatedAt archivedAt \
 state { type } team { id } project { id } \
 comments(first: 50) { nodes { id body createdAt user { displayName name } botActor { name } } } \
-inverseRelations(first: 50) { nodes { type issue { id } } }";
+inverseRelations(first: 50) { nodes { type issue { id state { type } } } }";
 
 #[async_trait::async_trait]
 impl TaskSource for LinearClient {

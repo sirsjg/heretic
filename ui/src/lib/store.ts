@@ -225,8 +225,13 @@ export const useStore = create<State>((set, get) => ({
         },
       });
     }
+    const source = get().board?.project.source;
     try {
-      await api.setEpicAuto(epicId, auto, get().board?.project.source);
+      await api.setEpicAuto(epicId, auto, source);
+      // A Linear epic's flag lives in Heretic's settings, which the backend
+      // just rewrote — re-read them, or the next full settings save would
+      // push a stale copy and silently undo the toggle.
+      if (source === "linear") set({ settings: await api.getSettings() });
       await get().refreshBoard();
     } catch (error) {
       get().notify("error", describe(error));

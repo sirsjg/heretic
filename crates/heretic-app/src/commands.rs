@@ -189,8 +189,8 @@ pub async fn list_projects(state: State<'_, AppState>) -> Response<Vec<Project>>
     }
 
     if settings.linear_enabled() {
-        match LinearClient::new(settings.linear.clone().unwrap_or_default()) {
-            Ok(linear) => match TaskSource::list_projects(&linear).await {
+        match Engine::source_for(&settings, SourceKind::Linear) {
+            Ok(linear) => match linear.list_projects().await {
                 Ok(mut listed) => projects.append(&mut listed),
                 Err(error) => failures.push(error.to_string()),
             },
