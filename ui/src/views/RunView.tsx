@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
 import type {
   AgentEvent,
@@ -16,9 +16,13 @@ import {
   IconChevron,
   IconClock,
   IconClose,
+  IconFileDiff,
   IconFolder,
+  IconPanel,
   IconStop,
 } from "../components/icons";
+import { RunRail, Resizer, useRunShortcuts } from "../components/RunRail";
+import { RunInspector, type InspectorTab } from "../components/RunInspector";
 import { api } from "../lib/bridge";
 
 const STATUS_TONE: Record<RunStatus, "accent" | "success" | "danger" | "warn" | "neutral"> = {
@@ -40,6 +44,12 @@ const STATUS_LABEL: Record<RunStatus, string> = {
   cancelled: "Stopped",
   needs_attention: "Needs attention",
 };
+
+/** Panel sizes. The rail is fixed; the inspector is dragged and remembered. */
+const RAIL_WIDTH = 236;
+const INSPECTOR_DEFAULT = 420;
+const INSPECTOR_MIN = 300;
+const INSPECTOR_MAX = 900;
 
 /** Stages shown in the timeline, in the order they happen. */
 const TIMELINE: RunStage[] = [
@@ -63,6 +73,42 @@ export function RunView() {
   } = useStore();
   const run = runs.find((r) => r.id === selectedRunId) ?? runs[0];
 
+  useRunShortcuts(runs, openRun);
+
+  // The panel layout is a working preference, not application state: it belongs
+  // to this machine and should survive a restart without going near the engine.
+  const [inspectorOpen, setInspectorOpen] = useState(
+    () => remembered("heretic.runs.inspector.open", "1") === "1",
+  );
+  const [inspectorWidth, setInspectorWidth] = useState(() =>
+    Number(remembered("heretic.runs.inspector.width", String(INSPECTOR_DEFAULT))),
+  );
+  const [tab, setTab] = useState<InspectorTab>(() =>
+    remembered("heretic.runs.inspector.tab", "changes") === "history"
+      ? "history"
+      : "changes",
+  );
+
+  const setWidth = useCallback((next: number) => {
+    const clamped = Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, Math.round(next)));
+    setInspectorWidth(clamped);
+    remember("heretic.runs.inspector.width", String(clamped));
+  }, []);
+
+  const showInspector = useCallback((open: boolean) => {
+    setInspectorOpen(open);
+    remember("heretic.runs.inspector.open", open ? "1" : "0");
+  }, []);
+
+  const openTab = useCallback(
+    (next: InspectorTab) => {
+      setTab(next);
+      remember("heretic.runs.inspector.tab", next);
+      showInspector(true);
+    },
+    [showInspector],
+  );
+
   if (!run) {
     return (
       <div className="grid h-full place-items-center">
@@ -76,67 +122,81 @@ export function RunView() {
 
   return (
     <div className="flex h-full">
-      <div className="flex min-w-0 flex-1 flex-col">
+      {runs.length > 1 && (
+        <RunRail
+          runs={runs}
+          selectedId={run.id}
+          onSelect={openRun}
+          width={RAIL_WIDTH}
+        />
+      )}
+
+      <div className="flex min-w-[340px] flex-1 flex-col">
         <RunHeader
           run={run}
+          inspectorOpen={inspectorOpen}
+          onToggleInspector={() => showInspector(!inspectorOpen)}
           onStop={() => void stopRun(run.id)}
           onDismiss={() => void dismissRun(run.id)}
         />
         <StageTimeline run={run} />
         <Feed
           run={run}
+          onReview={() => openTab("changes")}
           onIntegrate={() => void integrateRun(run.id)}
           onDiscard={() => void discardRunWork(run.id)}
           onAnswer={(answer) => void answerQuestion(run.id, answer)}
         />
       </div>
 
-      {runs.length > 1 && (
-        <aside
-          className="w-64 shrink-0 overflow-y-auto border-l"
-          style={{ background: "var(--surface)" }}
-        >
-          <p className="px-3 pb-1 pt-3 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
-            Runs
-          </p>
-          {runs.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => openRun(item.id)}
-              style={
-                item.id === run.id ? { background: "var(--accent-soft)" } : undefined
-              }
-              className={cx(
-                "flex w-full flex-col gap-1 border-b px-3 py-2.5 text-left transition-colors",
-                item.id !== run.id && "hover:bg-[var(--surface-3)]",
-              )}
-            >
-              <span className="flex items-center gap-1.5">
-                <Dot
-                  tone={STATUS_TONE[item.status]}
-                  pulse={item.status === "running" || item.status === "waiting"}
-                />
-                <span className="truncate text-[11.5px] text-[var(--text-muted)]">
-                  {item.project_name}
-                </span>
-              </span>
-              <span className="line-clamp-2 text-[12.5px] leading-snug">
-                {item.task_title}
-              </span>
-            </button>
-          ))}
-        </aside>
+      {inspectorOpen && (
+        <>
+          <Resizer
+            width={inspectorWidth}
+            onWidth={setWidth}
+            onReset={() => setWidth(INSPECTOR_DEFAULT)}
+            invert
+          />
+          <RunInspector
+            run={run}
+            tab={tab}
+            onTab={openTab}
+            onClose={() => showInspector(false)}
+            width={inspectorWidth}
+          />
+        </>
       )}
     </div>
   );
 }
 
+/** Read a remembered layout preference, tolerating a browser that has none. */
+function remembered(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function remember(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Private windows and locked-down webviews refuse; the layout still works.
+  }
+}
+
 function RunHeader({
   run,
+  inspectorOpen,
+  onToggleInspector,
   onStop,
   onDismiss,
 }: {
   run: RunRecord;
+  inspectorOpen: boolean;
+  onToggleInspector: () => void;
   onStop: () => void;
   onDismiss: () => void;
 }) {
@@ -161,6 +221,20 @@ function RunHeader({
             {run.task_title}
           </h1>
         </div>
+
+        <button
+          onClick={onToggleInspector}
+          aria-pressed={inspectorOpen}
+          title={inspectorOpen ? "Hide the changes panel" : "Show the changes panel"}
+          style={inspectorOpen ? { color: "var(--accent-text)" } : undefined}
+          className={cx(
+            "mt-0.5 shrink-0 rounded-md p-1.5",
+            !inspectorOpen && "text-[var(--text-faint)]",
+            "hover:bg-[var(--surface-3)] hover:text-[var(--text)]",
+          )}
+        >
+          <IconPanel className="size-4" />
+        </button>
 
         {active ? (
           <Button size="sm" variant="danger" icon={<IconStop className="size-3.5" />} onClick={onStop}>
@@ -306,11 +380,13 @@ function StageTimeline({ run }: { run: RunRecord }) {
 
 function Feed({
   run,
+  onReview,
   onIntegrate,
   onDiscard,
   onAnswer,
 }: {
   run: RunRecord;
+  onReview: () => void;
   onIntegrate: () => void;
   onDiscard: () => void;
   onAnswer: (answer: string) => void;
@@ -364,7 +440,12 @@ function Feed({
         )}
         {!isActive(run) && (
           <>
-            <Outcome run={run} onIntegrate={onIntegrate} onDiscard={onDiscard} />
+            <Outcome
+              run={run}
+              onReview={onReview}
+              onIntegrate={onIntegrate}
+              onDiscard={onDiscard}
+            />
             <RunStats run={run} />
           </>
         )}
@@ -377,52 +458,49 @@ function Feed({
 /** What the run left behind, shown once it has finished. */
 function Outcome({
   run,
+  onReview,
   onIntegrate,
   onDiscard,
 }: {
   run: RunRecord;
+  onReview: () => void;
   onIntegrate: () => void;
   onDiscard: () => void;
 }) {
-  const files = run.changes.files;
+  const changed = run.changes.files_changed;
 
   return (
     <div
       className="enter mt-2 rounded-lg border px-3 py-2.5"
       style={{ background: "var(--surface-2)" }}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Badge tone={STATUS_TONE[run.status]}>{STATUS_LABEL[run.status]}</Badge>
-        {run.changes.files_changed > 0 ? (
-          <span className="font-mono text-[11.5px] text-[var(--text-muted)]">
-            {run.changes.files_changed} files{" "}
-            <span style={{ color: "var(--success)" }}>+{run.changes.insertions}</span>{" "}
-            <span style={{ color: "var(--danger)" }}>−{run.changes.deletions}</span>
-          </span>
+        {changed > 0 ? (
+          <>
+            <span className="font-mono text-[11.5px] text-[var(--text-muted)]">
+              {changed} file{changed === 1 ? "" : "s"}{" "}
+              <span style={{ color: "var(--success)" }}>+{run.changes.insertions}</span>{" "}
+              <span style={{ color: "var(--danger)" }}>−{run.changes.deletions}</span>
+            </span>
+            {/* The diff itself lives in the panel beside the feed, where there
+                is room to read it. This is the way in. */}
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<IconFileDiff className="size-3.5" />}
+              onClick={onReview}
+              className="ml-auto"
+            >
+              Read the diff
+            </Button>
+          </>
         ) : (
           <span className="text-[11.5px] text-[var(--text-muted)]">
             Nothing was changed.
           </span>
         )}
       </div>
-
-      {files.length > 0 && (
-        <ul className="mt-2 flex flex-col gap-0.5">
-          {files.slice(0, 12).map((file) => (
-            <li
-              key={file}
-              className="truncate font-mono text-[11.5px] text-[var(--text-muted)]"
-            >
-              {file}
-            </li>
-          ))}
-          {files.length > 12 && (
-            <li className="text-[11.5px] text-[var(--text-faint)]">
-              and {files.length - 12} more
-            </li>
-          )}
-        </ul>
-      )}
 
       {run.landing === "on_branch" && run.branch && (
         <div className="mt-2 flex flex-wrap items-center gap-2 border-t pt-2">

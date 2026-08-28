@@ -10,6 +10,7 @@ use heretic_core::detect::{self, CliStatus, HostProbe, ModelHost};
 use heretic_core::model::{Epic, Project, Task};
 use heretic_core::orchestrator::RunRecord;
 use heretic_core::selection::BoardSnapshot;
+use heretic_core::worktree::{Commit, FileChange};
 use heretic_core::FluxClient;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -272,6 +273,60 @@ pub async fn discard_run_work(state: State<'_, AppState>, run_id: String) -> Res
     state
         .engine
         .discard_run_work(&run_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+// --- Reading a run's work ----------------------------------------------------
+
+/// Every file a run touched, with its line counts — the list behind the
+/// Changes tab.
+#[tauri::command]
+pub async fn run_changed_files(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Response<Vec<FileChange>> {
+    state
+        .engine
+        .run_changed_files(&run_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// One file's diff, as a unified patch.
+#[tauri::command]
+pub async fn run_file_diff(
+    state: State<'_, AppState>,
+    run_id: String,
+    path: String,
+) -> Response<String> {
+    state
+        .engine
+        .run_file_diff(&run_id, &path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// The commits a run put on its branch, newest first.
+#[tauri::command]
+pub async fn run_commits(state: State<'_, AppState>, run_id: String) -> Response<Vec<Commit>> {
+    state
+        .engine
+        .run_commits(&run_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// The patch one of those commits introduced.
+#[tauri::command]
+pub async fn run_commit_diff(
+    state: State<'_, AppState>,
+    run_id: String,
+    sha: String,
+) -> Response<String> {
+    state
+        .engine
+        .run_commit_diff(&run_id, &sha)
         .await
         .map_err(|error| error.to_string())
 }

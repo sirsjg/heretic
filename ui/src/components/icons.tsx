@@ -122,3 +122,41 @@ export const IconClock = ({ className = "size-4", style }: Props) => (
     <path d="M12 7.5V12l3 1.8" />
   </svg>
 );
+
+export const IconFileDiff = ({ className = "size-4", style }: Props) => (
+  <svg {...base} className={className} style={style}>
+    <path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z" />
+    <path d="M14 3.5v5h5" />
+    <path d="M9.5 12.5h5M12 10v5M9.5 17.5h5" />
+  </svg>
+);
+
+export const IconHistory = ({ className = "size-4", style }: Props) => (
+  <svg {...base} className={className} style={style}>
+    <circle cx="12" cy="6" r="2.5" />
+    <circle cx="12" cy="18" r="2.5" />
+    <path d="M12 8.5v7" />
+    <path d="M14.5 6h5M14.5 18h5" />
+  </svg>
+);
+
+export const IconSearch = ({ className = "size-4", style }: Props) => (
+  <svg {...base} className={className} style={style}>
+    <circle cx="10.5" cy="10.5" r="6.5" />
+    <path d="M15.5 15.5L20 20" />
+  </svg>
+);
+
+export const IconPanel = ({ className = "size-4", style }: Props) => (
+  <svg {...base} className={className} style={style}>
+    <rect x="3" y="4.5" width="18" height="15" rx="2" />
+    <path d="M14.5 4.5v15" />
+  </svg>
+);
+
+export const IconCopy = ({ className = "size-4", style }: Props) => (
+  <svg {...base} className={className} style={style}>
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3" />
+  </svg>
+);

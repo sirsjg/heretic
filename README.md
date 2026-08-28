@@ -61,6 +61,10 @@ are starting today, start with Heretic.
 - **Keeps agents out of each other's way.** Each task gets its own
   `git worktree` on its own branch, so several can run at once without
   colliding.
+- **Shows you the work, not just the transcript.** Beside the run's feed sits
+  the diff it produced — every file with its own patch, and the commits it put
+  on its branch — read straight from git, so you can decide whether to merge
+  without leaving for a terminal.
 - **Writes back what happened.** Status transitions and a summary comment go to
   Flux under the agent's name, so the board stays honest whether you are
   watching or not.
