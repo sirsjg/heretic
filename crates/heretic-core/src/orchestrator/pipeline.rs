@@ -390,6 +390,14 @@ async fn run_stage_conversing(
     progress: &mpsc::Sender<RunProgress>,
     answers: &mut mpsc::Receiver<String>,
 ) -> StageResult {
+    // Yolo mode: no protocol in the prompt, no question parsing, no channel.
+    if !may_ask {
+        return run_stage(
+            stage, role, profile, base_prompt, workspace, executor, cancel, progress,
+        )
+        .await;
+    }
+
     let mut rounds: Vec<QuestionRound> = Vec::new();
 
     loop {
@@ -414,6 +422,11 @@ Last question: {question}",
                 profile.name
             ));
         }
+
+        // A stale answer — one that slipped in for the previous question in the
+        // moment before the run's status flipped back to running — must not
+        // satisfy this question unseen.
+        while answers.try_recv().is_ok() {}
 
         let _ = progress
             .send(RunProgress::QuestionAsked {
@@ -1143,6 +1156,50 @@ mod tests {
         run_with_answers(config, board, workspace, executor, cancel, answer_rx).await
     }
 
+    /// As [`run`], answering each question as it is asked — the way answers
+    /// actually arrive. Pre-queued answers would be discarded: the pipeline
+    /// deliberately drains stale answers before putting a question to the user.
+    async fn run_answering(
+        config: RunConfig,
+        board: &FakeBoard,
+        workspace: &FakeWorkspace,
+        executor: &ScriptedExecutor,
+        cancel: CancelToken,
+        replies: Vec<&str>,
+    ) -> (RunOutcome, Vec<RunProgress>) {
+        let (answer_tx, answer_rx) = mpsc::channel(1);
+        let (tx, mut rx) = mpsc::channel(512);
+        let collected = Arc::new(Mutex::new(Vec::new()));
+        let sink = collected.clone();
+        let mut replies: std::collections::VecDeque<String> =
+            replies.into_iter().map(str::to_string).collect();
+        let pump = tokio::spawn(async move {
+            while let Some(item) = rx.recv().await {
+                if matches!(item, RunProgress::QuestionAsked { .. }) {
+                    if let Some(reply) = replies.pop_front() {
+                        let _ = answer_tx.send(reply).await;
+                    }
+                }
+                sink.lock().unwrap().push(item);
+            }
+        });
+
+        let outcome = execute_run(
+            context(),
+            config,
+            board,
+            workspace,
+            executor,
+            cancel,
+            tx,
+            answer_rx,
+        )
+        .await;
+        let _ = pump.await;
+        let progress = collected.lock().unwrap().clone();
+        (outcome, progress)
+    }
+
     /// As [`run`], with a caller-supplied answers channel for question tests.
     async fn run_with_answers(
         config: RunConfig,
@@ -1801,17 +1858,13 @@ mod tests {
             ],
         );
 
-        let (answer_tx, answer_rx) = mpsc::channel(8);
-        // The pipeline only reads an answer after asking, so it can be queued.
-        answer_tx.send("Use 3000.".to_string()).await.unwrap();
-
-        let (outcome, progress) = run_with_answers(
+        let (outcome, progress) = run_answering(
             config(asking_pipeline(), &[Role::Implementer]),
             &board,
             &workspace,
             &executor,
             CancelToken::new(),
-            answer_rx,
+            vec!["Use 3000."],
         )
         .await;
 
@@ -1834,6 +1887,53 @@ mod tests {
         assert!(second.contains("Which port should the service listen on?"));
         assert!(second.contains("Use 3000."));
         assert!(second.contains("Answers from the user"));
+    }
+
+    #[tokio::test]
+    async fn a_stale_queued_answer_never_satisfies_a_question_unseen() {
+        // A duplicate submission racing the previous round leaves an answer
+        // already sitting in the channel when the next question is asked. It
+        // must be discarded — the run waits for an answer given after the
+        // question was actually seen.
+        let board = FakeBoard::default();
+        let workspace = FakeWorkspace::with_changes();
+        let executor = ScriptedExecutor::with(
+            Role::Implementer,
+            vec![
+                StageScript::Says("QUESTION: Which port?".into()),
+                StageScript::Says("done".into()),
+            ],
+        );
+
+        let (answer_tx, answer_rx) = mpsc::channel(8);
+        answer_tx.send("stale".to_string()).await.unwrap();
+
+        let (tx, mut rx) = mpsc::channel(512);
+        let responder = tokio::spawn(async move {
+            while let Some(item) = rx.recv().await {
+                if matches!(item, RunProgress::QuestionAsked { .. }) {
+                    let _ = answer_tx.send("fresh".to_string()).await;
+                }
+            }
+        });
+
+        let outcome = execute_run(
+            context(),
+            config(asking_pipeline(), &[Role::Implementer]),
+            &board,
+            &workspace,
+            &executor,
+            CancelToken::new(),
+            tx,
+            answer_rx,
+        )
+        .await;
+        let _ = responder.await;
+
+        assert_eq!(outcome.result, RunResult::Completed);
+        let second = &executor.prompts_for(Role::Implementer)[1];
+        assert!(second.contains("fresh"), "{second}");
+        assert!(!second.contains("stale"), "{second}");
     }
 
     #[tokio::test]
@@ -1901,18 +2001,13 @@ mod tests {
             vec![ask.clone(), ask.clone(), ask.clone(), ask.clone()],
         );
 
-        let (answer_tx, answer_rx) = mpsc::channel(8);
-        for _ in 0..3 {
-            answer_tx.send("Answered.".to_string()).await.unwrap();
-        }
-
-        let (outcome, _) = run_with_answers(
+        let (outcome, _) = run_answering(
             config(asking_pipeline(), &[Role::Implementer]),
             &board,
             &workspace,
             &executor,
             CancelToken::new(),
-            answer_rx,
+            vec!["Answered.", "Answered.", "Answered."],
         )
         .await;
 
@@ -1977,20 +2072,17 @@ mod tests {
                     ],
                 );
 
-        let (answer_tx, answer_rx) = mpsc::channel(8);
-        answer_tx.send("Yes, it is deprecated.".to_string()).await.unwrap();
-
         let pipeline = Pipeline {
             yolo: false,
             ..Pipeline::default()
         };
-        let (outcome, _) = run_with_answers(
+        let (outcome, _) = run_answering(
             config(pipeline, &[Role::Implementer, Role::Reviewer]),
             &board,
             &workspace,
             &executor,
             CancelToken::new(),
-            answer_rx,
+            vec!["Yes, it is deprecated."],
         )
         .await;
 

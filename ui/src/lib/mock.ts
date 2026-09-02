@@ -632,8 +632,17 @@ export class MockEngine {
 
     const item = RUN_SCRIPT[index]!;
 
-    // A question pauses the run until answerQuestion() resumes it.
+    // A question pauses the run until answerQuestion() resumes it — unless
+    // the project runs in Yolo mode, where agents never get to ask and the
+    // scripted question is simply skipped.
     if (item.event.type === "question") {
+      const yolo =
+        this.settings.bindings.find((b) => b.project_id === run.project_id)
+          ?.pipeline.yolo ?? true;
+      if (yolo) {
+        this.later(() => this.play(runId, index + 1), 0);
+        return;
+      }
       run.status = "waiting";
       run.question = {
         stage: item.stage,

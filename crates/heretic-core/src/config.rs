@@ -132,6 +132,10 @@ impl ReasoningEffort {
 
     /// The thinking-token budget for backends that take one, matching Claude
     /// Code's own tiers ("think", "megathink", "ultrathink").
+    ///
+    /// Verified against Claude Code 2.1, which reads `MAX_THINKING_TOKENS`
+    /// from the environment. If a later CLI re-tiers these, only this mapping
+    /// needs to move.
     pub fn thinking_tokens(self) -> u32 {
         match self {
             ReasoningEffort::Low => 4_000,

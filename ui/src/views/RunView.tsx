@@ -773,6 +773,12 @@ function AnswerBox({
 }) {
   const [draft, setDraft] = useState("");
 
+  // The layout already knows the platform; the shortcut hint should match it.
+  const mac =
+    typeof document !== "undefined" &&
+    document.documentElement.getAttribute("data-os") === "macos";
+  const sendKey = mac ? "⌘↵" : "Ctrl+↵";
+
   function send() {
     const answer = draft.trim();
     if (!answer) return;
@@ -800,7 +806,11 @@ function AnswerBox({
             }
           }}
           rows={2}
-          placeholder="Type your answer… (⌘↵ to send)"
+          placeholder={`Type your answer… (${sendKey} to send)`}
+          aria-label="Answer the agent's question"
+          // The whole answer is folded into the next prompt; keep it a note,
+          // not a document.
+          maxLength={4000}
           className="min-h-[3.25rem] flex-1 resize-y rounded-lg border px-2.5 py-1.5 text-[12.5px] leading-relaxed outline-none focus:border-[var(--accent)]"
           style={{ background: "var(--surface)" }}
           autoFocus

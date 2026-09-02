@@ -346,7 +346,11 @@ impl Engine {
             return false;
         }
         match self.answers.read().await.get(run_id) {
-            Some(sender) => sender.send(answer).await.is_ok(),
+            // try_send: a second submission racing the first must be refused,
+            // not queued — a queued answer would satisfy the next question
+            // without the user ever seeing it. It also keeps this command from
+            // blocking the UI on a full channel.
+            Some(sender) => sender.try_send(answer).is_ok(),
             None => false,
         }
     }
@@ -445,9 +449,9 @@ impl Engine {
             .write()
             .await
             .insert(run_id.clone(), cancel.clone());
-        // Room for a few answers so a send never blocks the UI; the pipeline
-        // reads one per question asked.
-        let (answer_tx, answer_rx) = mpsc::channel(8);
+        // One slot: the pipeline only ever wants one pending answer, and a
+        // second slot is exactly where a duplicate submission would hide.
+        let (answer_tx, answer_rx) = mpsc::channel(1);
         self.answers
             .write()
             .await
