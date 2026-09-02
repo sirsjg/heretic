@@ -104,6 +104,9 @@ export type RunnerKind =
   | { kind: "opencode"; base_url?: string | null }
   | { kind: "custom"; command: string; args: string[] };
 
+/** How hard a model should think. Absent means the backend's own default. */
+export type ReasoningEffort = "low" | "medium" | "high";
+
 export interface ModelProfile {
   id: string;
   name: string;
@@ -114,6 +117,8 @@ export interface ModelProfile {
   timeout_secs?: number | null;
   /** Context window in tokens, when the host reports one. */
   context_window?: number | null;
+  /** Reasoning effort, for backends that let us say. null keeps their default. */
+  reasoning_effort?: ReasoningEffort | null;
   autonomous: boolean;
 }
 
@@ -125,6 +130,11 @@ export interface Pipeline {
   review: boolean;
   document: boolean;
   max_revisions: number;
+  /**
+   * Yolo mode: agents never stop to ask the user anything. Off lets an agent
+   * pause its run with a question and wait for the answer.
+   */
+  yolo: boolean;
 }
 
 export interface ProjectBinding {
@@ -232,10 +242,19 @@ export type RunStage =
 export type RunStatus =
   | "queued"
   | "running"
+  /** Paused on a question an agent asked; nothing moves until the user answers. */
+  | "waiting"
   | "succeeded"
   | "failed"
   | "cancelled"
   | "needs_attention";
+
+/** Statuses of a run that is still in flight. */
+export const ACTIVE_STATUSES: RunStatus[] = ["queued", "running", "waiting"];
+
+export function isActive(run: { status: RunStatus }): boolean {
+  return ACTIVE_STATUSES.includes(run.status);
+}
 
 /** Token counts, with cached tokens kept apart from fresh input. */
 export interface TokenUsage {
@@ -272,6 +291,10 @@ export type AgentEvent =
   | { type: "usage"; usage: TokenUsage }
   /** The prompt Heretic generated for a stage and handed to the agent. */
   | { type: "prompt"; text: string }
+  /** A question the agent asked the user; the run waits on the answer. */
+  | { type: "question"; text: string }
+  /** The user's answer, on its way back to the agent. */
+  | { type: "answer"; text: string }
   | {
       type: "result";
       text?: string | null;
@@ -286,6 +309,13 @@ export interface RunFeedItem {
   stage: RunStage;
   role?: Role | null;
   event: AgentEvent;
+}
+
+/** A question a run is paused on. */
+export interface PendingQuestion {
+  stage: RunStage;
+  role?: Role | null;
+  question: string;
 }
 
 /** Where a run's work ended up. */
@@ -372,6 +402,8 @@ export interface RunRecord {
   /** The branch the work forked from, and would merge back into. */
   base_branch?: string | null;
   worktree_path?: string | null;
+  /** The question the run is paused on, when its status is "waiting". */
+  question?: PendingQuestion | null;
   /** What has become of the work since the agents finished. */
   landing: Landing;
   changes: ChangeSummary;

@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { useStore } from "../lib/store";
-import type { ModelProfile, Role, RunnerKind, Settings } from "../lib/types";
+import type {
+  ModelProfile,
+  ReasoningEffort,
+  Role,
+  RunnerKind,
+  Settings,
+} from "../lib/types";
 import { ROLES, ROLE_BLURBS, ROLE_LABELS } from "../lib/types";
 import {
   Badge,
@@ -73,6 +79,7 @@ export function ModelsView() {
           env: {},
           timeout_secs: 3600,
           context_window: null,
+          reasoning_effort: null,
           autonomous: true,
         },
       ],
@@ -227,6 +234,23 @@ export function ModelsView() {
 
 function rolesUsing(settings: Settings, profileId: string): Role[] {
   return ROLES.filter((role) => settings.roles[role] === profileId);
+}
+
+/** How the chosen effort actually reaches this profile's backend. */
+function reasoningHint(profile: ModelProfile): string {
+  switch (profile.runner.kind) {
+    case "claude_code":
+      return "Sets the thinking-token budget (MAX_THINKING_TOKENS). Default lets Claude decide.";
+    case "codex":
+    case "codex_oss":
+      return "Passed as model_reasoning_effort. Models that do not reason ignore it.";
+    case "opencode":
+      return profile.runner.base_url
+        ? "Passed to the host as reasoningEffort. Models that do not reason ignore it."
+        : "Only applies when a host endpoint is set; otherwise your OpenCode configuration decides.";
+    case "custom":
+      return "Handed to the command as HERETIC_REASONING_EFFORT.";
+  }
 }
 
 function RoleRow({
@@ -456,6 +480,24 @@ function ProfileEditor({
           </Field>
         </>
       )}
+
+      <Field label="Reasoning effort" hint={reasoningHint(profile)}>
+        <Select
+          value={profile.reasoning_effort ?? ""}
+          onChange={(value) =>
+            onChange({
+              ...profile,
+              reasoning_effort: (value || null) as ReasoningEffort | null,
+            })
+          }
+          options={[
+            { value: "", label: "Backend default" },
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+          ]}
+        />
+      </Field>
 
       <Field label="Time limit" hint="Minutes before the agent is stopped. Empty means no limit.">
         <Input

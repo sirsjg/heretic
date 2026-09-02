@@ -312,6 +312,7 @@ mod tests {
             branch: Some("heretic/task1".into()),
             base_branch: Some("main".into()),
             worktree_path: Some("/tmp/worktree".into()),
+            question: None,
             landing: Landing::Nothing,
             changes: ChangeSummary::default(),
             result: None,

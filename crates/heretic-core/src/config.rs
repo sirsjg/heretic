@@ -107,6 +107,44 @@ impl RunnerKind {
     }
 }
 
+/// How hard a model should think before acting.
+///
+/// Backends spell this differently — a thinking-token budget for Claude Code, a
+/// named effort for Codex and OpenCode — so the profile stores the intent and
+/// the command builder translates it. `None` leaves the backend's default
+/// untouched, which is the right choice for models that do not reason at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningEffort {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium => "medium",
+            ReasoningEffort::High => "high",
+        }
+    }
+
+    /// The thinking-token budget for backends that take one, matching Claude
+    /// Code's own tiers ("think", "megathink", "ultrathink").
+    ///
+    /// Verified against Claude Code 2.1, which reads `MAX_THINKING_TOKENS`
+    /// from the environment. If a later CLI re-tiers these, only this mapping
+    /// needs to move.
+    pub fn thinking_tokens(self) -> u32 {
+        match self {
+            ReasoningEffort::Low => 4_000,
+            ReasoningEffort::Medium => 10_000,
+            ReasoningEffort::High => 31_999,
+        }
+    }
+}
+
 /// A configured, selectable agent: a runner plus the model it should use.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelProfile {
@@ -131,6 +169,10 @@ pub struct ModelProfile {
     /// Passed to backends that would otherwise guess.
     #[serde(default)]
     pub context_window: Option<u64>,
+    /// How hard the model should think, for backends that let us say.
+    /// `None` keeps the backend's own default.
+    #[serde(default)]
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Whether this profile may take actions without per-action approval.
     /// Local sandboxed models are typically trusted; anything touching a real
     /// repo unattended has to be, or it will hang on a permission prompt.
@@ -187,6 +229,13 @@ pub struct Pipeline {
     /// implementer before the run is handed to a human.
     #[serde(default = "default_max_revisions")]
     pub max_revisions: u32,
+    /// Yolo mode: agents never stop to ask the user anything.
+    ///
+    /// On by default — it is what unattended runs need. Switched off, an agent
+    /// that is genuinely blocked may end its turn with a question; the run then
+    /// waits for the user's answer before that stage is run again.
+    #[serde(default = "default_true")]
+    pub yolo: bool,
 }
 
 fn default_max_revisions() -> u32 {
@@ -200,6 +249,7 @@ impl Default for Pipeline {
             review: true,
             document: false,
             max_revisions: default_max_revisions(),
+            yolo: true,
         }
     }
 }
@@ -307,6 +357,7 @@ impl Settings {
             env: BTreeMap::new(),
             timeout_secs: Some(3600),
             context_window: None,
+            reasoning_effort: None,
             autonomous: true,
         };
         let qwen = ModelProfile {
@@ -318,6 +369,7 @@ impl Settings {
             env: BTreeMap::new(),
             timeout_secs: Some(5400),
             context_window: None,
+            reasoning_effort: None,
             autonomous: true,
         };
 
