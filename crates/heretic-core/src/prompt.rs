@@ -563,7 +563,9 @@ mod tests {
     #[test]
     fn questions_are_read_from_the_final_message() {
         assert_eq!(
-            parse_question("I looked around.\nQUESTION: Should the limit be per user or per tenant?"),
+            parse_question(
+                "I looked around.\nQUESTION: Should the limit be per user or per tenant?"
+            ),
             Some("Should the limit be per user or per tenant?".into())
         );
         assert_eq!(

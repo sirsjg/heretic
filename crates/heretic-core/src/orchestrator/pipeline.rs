@@ -393,7 +393,14 @@ async fn run_stage_conversing(
     // Yolo mode: no protocol in the prompt, no question parsing, no channel.
     if !may_ask {
         return run_stage(
-            stage, role, profile, base_prompt, workspace, executor, cancel, progress,
+            stage,
+            role,
+            profile,
+            base_prompt,
+            workspace,
+            executor,
+            cancel,
+            progress,
         )
         .await;
     }
@@ -403,7 +410,14 @@ async fn run_stage_conversing(
     loop {
         let prompt_text = prompt::compose_stage_prompt(base_prompt, &rounds, may_ask);
         let result = run_stage(
-            stage, role, profile, &prompt_text, workspace, executor, cancel, progress,
+            stage,
+            role,
+            profile,
+            &prompt_text,
+            workspace,
+            executor,
+            cancel,
+            progress,
         )
         .await;
 
@@ -2061,16 +2075,13 @@ mod tests {
         let board = FakeBoard::default();
         let workspace = FakeWorkspace::with_changes();
         let executor =
-            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Says("done".into())])
-                .and(
-                    Role::Reviewer,
-                    vec![
-                        StageScript::Says(
-                            "QUESTION: Is dropping the legacy endpoint intended?".into(),
-                        ),
-                        StageScript::Says("All clear then.\nVERDICT: approve".into()),
-                    ],
-                );
+            ScriptedExecutor::with(Role::Implementer, vec![StageScript::Says("done".into())]).and(
+                Role::Reviewer,
+                vec![
+                    StageScript::Says("QUESTION: Is dropping the legacy endpoint intended?".into()),
+                    StageScript::Says("All clear then.\nVERDICT: approve".into()),
+                ],
+            );
 
         let pipeline = Pipeline {
             yolo: false,

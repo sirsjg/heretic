@@ -397,8 +397,7 @@ mod tests {
     fn a_profile_supplied_thinking_budget_wins() {
         let mut p = profile(RunnerKind::ClaudeCode);
         p.reasoning_effort = Some(ReasoningEffort::Low);
-        p.env
-            .insert("MAX_THINKING_TOKENS".into(), "12345".into());
+        p.env.insert("MAX_THINKING_TOKENS".into(), "12345".into());
         let command = build_command(&p, "hi");
         assert_eq!(
             command.env.get("MAX_THINKING_TOKENS").map(String::as_str),
@@ -431,7 +430,10 @@ mod tests {
         let mut p = profile(RunnerKind::CodexOss { base_url: None });
         p.reasoning_effort = Some(ReasoningEffort::Low);
         let joined = build_command(&p, "hi").args.join(" ");
-        assert!(joined.contains("model_reasoning_effort=\"low\""), "{joined}");
+        assert!(
+            joined.contains("model_reasoning_effort=\"low\""),
+            "{joined}"
+        );
     }
 
     #[test]

@@ -452,10 +452,7 @@ impl Engine {
         // One slot: the pipeline only ever wants one pending answer, and a
         // second slot is exactly where a duplicate submission would hide.
         let (answer_tx, answer_rx) = mpsc::channel(1);
-        self.answers
-            .write()
-            .await
-            .insert(run_id.clone(), answer_tx);
+        self.answers.write().await.insert(run_id.clone(), answer_tx);
         self.publish(&record).await;
 
         let engine = Arc::clone(self);
