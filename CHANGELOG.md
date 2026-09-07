@@ -1,3 +1,13 @@
+## [0.5.0](https://github.com/sirsjg/heretic/compare/v0.4.0...v0.5.0) (2026-09-07)
+
+### Features
+
+* agent questions with Yolo mode, and per-profile reasoning effort ([5d83208](https://github.com/sirsjg/heretic/commit/5d8320825756f46790226a94d5badc1a6492e77d))
+
+### Bug Fixes
+
+* harden answer delivery and polish the answer box ([6abd53b](https://github.com/sirsjg/heretic/commit/6abd53b541a156ae3744c04598707bf99cbd69fa))
+
 ## [0.4.0](https://github.com/sirsjg/heretic/compare/v0.3.1...v0.4.0) (2026-08-25)
 
 ### Features
