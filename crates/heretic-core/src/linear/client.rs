@@ -377,18 +377,22 @@ impl TaskSource for LinearClient {
     }
 
     /// Linear has no blocker field, so the *intent* is honoured instead: the
-    /// reason is recorded as a comment and the issue is moved back to the
-    /// backlog, which takes it out of Todo and therefore out of the auto
-    /// loop's reach until a human triages it.
+    /// issue is moved back to the backlog, which takes it out of Todo and
+    /// therefore out of the auto loop's reach until a human triages it, and
+    /// the reason is recorded as a comment.
+    ///
+    /// The move comes first. It is the step that stops a failed task being
+    /// picked straight back up, so a comment that fails to post must not be
+    /// able to leave the issue sitting in Todo.
     async fn set_blocked_reason(&self, task_id: &str, reason: Option<&str>) -> Result<()> {
         let Some(reason) = reason else {
             // Clearing is a no-op: starting a run claims the issue into
             // In Progress, which already leaves nothing to clear.
             return Ok(());
         };
+        self.set_issue_state(task_id, TaskStatus::Planning).await?;
         self.post_comment(task_id, format!("⛔ **Blocked** — {reason}"))
-            .await?;
-        self.set_issue_state(task_id, TaskStatus::Planning).await
+            .await
     }
 }
 

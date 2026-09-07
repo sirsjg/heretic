@@ -186,7 +186,10 @@ pub(crate) fn status_from_state_type(state_type: &str) -> &'static str {
         // Cancelled work is off the board, not done — a dependency on it must
         // not be treated as satisfied.
         "canceled" => "canceled",
-        _ => "todo",
+        // A type this code does not know must fail closed: Todo is the column
+        // the auto loop runs from, so an unrecognised state lands in Planning,
+        // where a human has to move it before an agent touches it.
+        _ => "planning",
     }
 }
 
@@ -265,12 +268,14 @@ pub(crate) fn epic_from_project(epic: RawEpic, team_id: &str, auto: bool) -> Epi
 }
 
 pub(crate) fn task_from_issue(issue: RawIssue, team_id: &str) -> Task {
+    // An issue with no readable state is not runnable either; see
+    // `status_from_state_type` for why the fallback is Planning, not Todo.
     let status = issue
         .state
         .as_ref()
         .and_then(|s| s.state_type.as_deref())
         .map(status_from_state_type)
-        .unwrap_or("todo")
+        .unwrap_or("planning")
         .to_string();
 
     let sections = parse_description(issue.description.as_deref().unwrap_or(""));
@@ -546,6 +551,18 @@ mod tests {
         ] {
             assert_eq!(status_from_state_type(state_type), expected);
         }
+    }
+
+    #[test]
+    fn unknown_and_missing_states_are_not_runnable() {
+        // Todo is where the auto loop picks work up from, so anything this
+        // code cannot classify must land somewhere a human has to move it.
+        assert_eq!(status_from_state_type("some-future-type"), "planning");
+
+        let mut raw = issue_json();
+        raw["state"] = serde_json::Value::Null;
+        let task = task_from_issue(serde_json::from_value(raw).unwrap(), "team-1");
+        assert_eq!(task.status, "planning");
     }
 
     #[test]
