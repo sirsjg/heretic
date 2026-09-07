@@ -4,7 +4,7 @@
 //! asserted in tests — a wrong flag here is the difference between an agent that
 //! works autonomously and one that hangs forever on a permission prompt.
 
-use crate::config::{ModelProfile, RunnerKind};
+use crate::config::{ModelProfile, ReasoningEffort, RunnerKind};
 use crate::runner::stream::OutputFormat;
 use std::collections::BTreeMap;
 
@@ -48,6 +48,7 @@ fn opencode_host_config(
     base_url: &str,
     model: Option<&str>,
     context_window: Option<u64>,
+    reasoning: Option<ReasoningEffort>,
 ) -> String {
     let mut entry = serde_json::Map::new();
     if let Some(window) = context_window.filter(|w| *w > 0) {
@@ -59,6 +60,13 @@ fn opencode_host_config(
                 "context": window,
                 "output": (window / 4).clamp(1_024, 32_768),
             }),
+        );
+    }
+    if let Some(effort) = reasoning {
+        // Passed through to the provider; models that do not reason ignore it.
+        entry.insert(
+            "options".into(),
+            serde_json::json!({ "reasoningEffort": effort.as_str() }),
         );
     }
 
@@ -103,6 +111,12 @@ pub fn build_command(profile: &ModelProfile, prompt: &str) -> AgentCommand {
             }
             if profile.autonomous {
                 args.push("--dangerously-skip-permissions".into());
+            }
+            // Claude Code takes its thinking budget from the environment, not a
+            // flag. The profile's own env wins over the derived value.
+            if let Some(effort) = profile.reasoning_effort {
+                env.entry("MAX_THINKING_TOKENS".into())
+                    .or_insert_with(|| effort.thinking_tokens().to_string());
             }
             args.extend(profile.extra_args.iter().cloned());
             args.push(prompt.to_string());
@@ -180,6 +194,11 @@ pub fn build_command(profile: &ModelProfile, prompt: &str) -> AgentCommand {
                 args.push(format!("model_context_window={window}"));
             }
 
+            if let Some(effort) = profile.reasoning_effort {
+                args.push("-c".into());
+                args.push(format!("model_reasoning_effort=\"{}\"", effort.as_str()));
+            }
+
             args.extend(profile.extra_args.iter().cloned());
             args.push(prompt.to_string());
 
@@ -213,7 +232,12 @@ pub fn build_command(profile: &ModelProfile, prompt: &str) -> AgentCommand {
                 Some(url) => {
                     env.entry("OPENCODE_CONFIG_CONTENT".into())
                         .or_insert_with(|| {
-                            opencode_host_config(url, model, profile.context_window)
+                            opencode_host_config(
+                                url,
+                                model,
+                                profile.context_window,
+                                profile.reasoning_effort,
+                            )
                         });
                     if let Some(model) = model {
                         args.push("-m".into());
@@ -263,6 +287,10 @@ pub fn build_command(profile: &ModelProfile, prompt: &str) -> AgentCommand {
             if !model.is_empty() {
                 env.entry("HERETIC_MODEL".into()).or_insert(model);
             }
+            if let Some(effort) = profile.reasoning_effort {
+                env.entry("HERETIC_REASONING_EFFORT".into())
+                    .or_insert_with(|| effort.as_str().to_string());
+            }
 
             AgentCommand {
                 program: command.clone(),
@@ -310,6 +338,7 @@ mod tests {
             env: BTreeMap::new(),
             timeout_secs: None,
             context_window: None,
+            reasoning_effort: None,
             autonomous: true,
         }
     }
@@ -351,6 +380,58 @@ mod tests {
         let command = build_command(&p, "hi");
         let position = command.args.iter().position(|a| a == "--model").unwrap();
         assert_eq!(command.args[position + 1], "opus");
+    }
+
+    #[test]
+    fn claude_reasoning_effort_becomes_a_thinking_budget() {
+        let mut p = profile(RunnerKind::ClaudeCode);
+        p.reasoning_effort = Some(ReasoningEffort::High);
+        let command = build_command(&p, "hi");
+        assert_eq!(
+            command.env.get("MAX_THINKING_TOKENS").map(String::as_str),
+            Some("31999")
+        );
+    }
+
+    #[test]
+    fn a_profile_supplied_thinking_budget_wins() {
+        let mut p = profile(RunnerKind::ClaudeCode);
+        p.reasoning_effort = Some(ReasoningEffort::Low);
+        p.env
+            .insert("MAX_THINKING_TOKENS".into(), "12345".into());
+        let command = build_command(&p, "hi");
+        assert_eq!(
+            command.env.get("MAX_THINKING_TOKENS").map(String::as_str),
+            Some("12345")
+        );
+    }
+
+    #[test]
+    fn no_reasoning_effort_leaves_the_backend_default_alone() {
+        let claude = build_command(&profile(RunnerKind::ClaudeCode), "hi");
+        assert!(!claude.env.contains_key("MAX_THINKING_TOKENS"));
+
+        let codex = build_command(&profile(RunnerKind::Codex), "hi");
+        assert!(!codex.args.join(" ").contains("model_reasoning_effort"));
+    }
+
+    #[test]
+    fn codex_reasoning_effort_is_a_config_override() {
+        let mut p = profile(RunnerKind::Codex);
+        p.reasoning_effort = Some(ReasoningEffort::Medium);
+        let joined = build_command(&p, "hi").args.join(" ");
+        assert!(
+            joined.contains("model_reasoning_effort=\"medium\""),
+            "{joined}"
+        );
+    }
+
+    #[test]
+    fn local_codex_reasoning_effort_is_passed_the_same_way() {
+        let mut p = profile(RunnerKind::CodexOss { base_url: None });
+        p.reasoning_effort = Some(ReasoningEffort::Low);
+        let joined = build_command(&p, "hi").args.join(" ");
+        assert!(joined.contains("model_reasoning_effort=\"low\""), "{joined}");
     }
 
     #[test]
@@ -581,6 +662,52 @@ mod tests {
         let config: serde_json::Value =
             serde_json::from_str(command.env.get("OPENCODE_CONFIG_CONTENT").unwrap()).unwrap();
         assert!(config["provider"]["heretic-host"]["models"]["qwen3-coder:30b"]["limit"].is_null());
+    }
+
+    #[test]
+    fn opencode_reasoning_effort_lands_in_the_generated_model_options() {
+        let mut p = profile(RunnerKind::OpenCode {
+            base_url: Some("http://spark.local:11434".into()),
+        });
+        p.model = Some("qwen3-coder:30b".into());
+        p.reasoning_effort = Some(ReasoningEffort::High);
+
+        let command = build_command(&p, "hi");
+        let config: serde_json::Value =
+            serde_json::from_str(command.env.get("OPENCODE_CONFIG_CONTENT").unwrap()).unwrap();
+        assert_eq!(
+            config["provider"]["heretic-host"]["models"]["qwen3-coder:30b"]["options"]
+                ["reasoningEffort"],
+            "high"
+        );
+    }
+
+    #[test]
+    fn opencode_without_a_host_leaves_reasoning_to_its_own_configuration() {
+        // Without a host of our own there is no generated configuration to put
+        // the option in, and replacing the user's file just for this would
+        // throw their providers away.
+        let mut p = profile(RunnerKind::OpenCode { base_url: None });
+        p.reasoning_effort = Some(ReasoningEffort::High);
+        let command = build_command(&p, "hi");
+        assert!(!command.env.contains_key("OPENCODE_CONFIG_CONTENT"));
+    }
+
+    #[test]
+    fn custom_runners_learn_the_effort_from_the_environment() {
+        let mut p = profile(RunnerKind::Custom {
+            command: "my-agent".into(),
+            args: vec![],
+        });
+        p.reasoning_effort = Some(ReasoningEffort::Medium);
+        let command = build_command(&p, "hi");
+        assert_eq!(
+            command
+                .env
+                .get("HERETIC_REASONING_EFFORT")
+                .map(String::as_str),
+            Some("medium")
+        );
     }
 
     #[test]

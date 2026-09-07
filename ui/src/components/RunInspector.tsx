@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/bridge";
 import { splitPath } from "../lib/diff";
 import type { ChangeStatus, FileChange, RunCommit, RunRecord } from "../lib/types";
-import { CHANGE_STATUS_LABELS, CHANGE_STATUS_LETTERS } from "../lib/types";
+import { CHANGE_STATUS_LABELS, CHANGE_STATUS_LETTERS, isActive } from "../lib/types";
 import { Badge, EmptyState, Spinner, cx } from "./ui";
 import { Collapsible, DiffStat, PatchView } from "./DiffView";
 import {
@@ -193,7 +193,7 @@ function ChangesTab({ run, nonce }: { run: RunRecord; nonce: number }) {
       <EmptyState
         title="Nothing has changed yet"
         description={
-          run.status === "running"
+          isActive(run)
             ? "Files appear here the moment the agent writes one."
             : "This run finished without touching the repository."
         }
@@ -355,7 +355,7 @@ function HistoryTab({ run, nonce }: { run: RunRecord; nonce: number }) {
       <EmptyState
         title="No commits yet"
         description={
-          run.status === "running"
+          isActive(run)
             ? "Heretic commits the work when the run finishes, so this fills in at the end."
             : "This run left nothing committed on its branch."
         }

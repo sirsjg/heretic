@@ -15,6 +15,7 @@ import { Dot, cx } from "./ui";
 const STATUS_TONE: Record<RunStatus, "accent" | "success" | "danger" | "warn" | "neutral"> = {
   queued: "neutral",
   running: "accent",
+  waiting: "warn",
   succeeded: "success",
   failed: "danger",
   cancelled: "neutral",
@@ -27,6 +28,8 @@ const STATUS_TONE: Record<RunStatus, "accent" | "success" | "danger" | "warn" | 
  */
 function standing(run: RunRecord): { text: string; tone: string } {
   if (run.status === "running") return { text: "Working", tone: "var(--accent-text)" };
+  if (run.status === "waiting")
+    return { text: "Waiting for you", tone: "var(--warn)" };
   if (run.status === "queued") return { text: "Queued", tone: "var(--text-faint)" };
   if (run.status === "failed") return { text: "Failed", tone: "var(--danger)" };
   if (run.status === "cancelled") return { text: "Stopped", tone: "var(--text-faint)" };
@@ -158,7 +161,10 @@ function RunRow({
     >
       <span className="flex items-start gap-1.5">
         <span className="mt-[5px]">
-          <Dot tone={STATUS_TONE[run.status]} pulse={run.status === "running"} />
+          <Dot
+            tone={STATUS_TONE[run.status]}
+            pulse={run.status === "running" || run.status === "waiting"}
+          />
         </span>
         <span className="line-clamp-2 min-w-0 flex-1 text-[12.5px] leading-snug">
           {run.task_title}

@@ -89,10 +89,21 @@ impl RunResult {
 pub enum RunStatus {
     Queued,
     Running,
+    /// Paused on a question an agent asked; nothing moves until the user answers.
+    Waiting,
     Succeeded,
     Failed,
     Cancelled,
     NeedsAttention,
+}
+
+/// A question a run is paused on, shown in the run header until it is answered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingQuestion {
+    pub stage: RunStage,
+    #[serde(default)]
+    pub role: Option<Role>,
+    pub question: String,
 }
 
 /// One entry in a run's activity feed.
@@ -151,6 +162,14 @@ pub enum RunProgress {
     StageStats(StageStats),
     /// The reviewer sent the work back; the implementer is going round again.
     RevisionRequested { attempt: u32, notes: String },
+    /// An agent asked the user something; the run is paused until the answer.
+    QuestionAsked {
+        stage: RunStage,
+        role: Option<Role>,
+        question: String,
+    },
+    /// The user answered; the stage runs again with the answer in hand.
+    QuestionAnswered { stage: RunStage, answer: String },
     /// A note from the engine itself, not from an agent.
     Note { message: String },
     /// The command a stage is about to run.
@@ -215,6 +234,9 @@ pub struct RunRecord {
     pub base_branch: Option<String>,
     #[serde(default)]
     pub worktree_path: Option<String>,
+    /// The question the run is paused on, when its status is `Waiting`.
+    #[serde(default)]
+    pub question: Option<PendingQuestion>,
     /// What has become of the work since the agents finished.
     #[serde(default)]
     pub landing: Landing,
@@ -243,7 +265,10 @@ impl RunRecord {
     }
 
     pub fn is_active(&self) -> bool {
-        matches!(self.status, RunStatus::Queued | RunStatus::Running)
+        matches!(
+            self.status,
+            RunStatus::Queued | RunStatus::Running | RunStatus::Waiting
+        )
     }
 }
 

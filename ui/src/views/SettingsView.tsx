@@ -245,6 +245,25 @@ export function SettingsView() {
                 </Field>
 
                 <div className="sm:col-span-2">
+                  <p className="mb-2 text-[12px] font-medium">Questions</p>
+                  <StageToggle
+                    label="Yolo mode"
+                    description={
+                      binding.pipeline.yolo
+                        ? "Agents never stop to ask you anything — required for fully unattended runs."
+                        : "An agent that is genuinely blocked may pause its run with a question; the run waits until you answer. An unattended run can sit waiting overnight."
+                    }
+                    checked={binding.pipeline.yolo}
+                    onChange={(yolo) =>
+                      void saveBinding({
+                        ...binding,
+                        pipeline: { ...binding.pipeline, yolo },
+                      })
+                    }
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
                   <p className="mb-2 text-[12px] font-medium">Stages</p>
                   <div className="flex flex-col gap-2">
                     <StageToggle

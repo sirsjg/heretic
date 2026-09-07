@@ -1,5 +1,6 @@
 import { useStore } from "../lib/store";
 import type { ConnectionState } from "../lib/types";
+import { isActive } from "../lib/types";
 import { Badge, Dot, cx } from "./ui";
 import {
   IconBoard,
@@ -26,9 +27,8 @@ export function Sidebar() {
     syncFromFlux,
   } = useStore();
 
-  const activeRuns = runs.filter(
-    (run) => run.status === "running" || run.status === "queued",
-  ).length;
+  const activeRuns = runs.filter(isActive).length;
+  const waitingRuns = runs.filter((run) => run.status === "waiting").length;
 
   return (
     <aside
@@ -70,9 +70,10 @@ export function Sidebar() {
             (b) => b.project_id === project.id,
           );
           const running = runs.some(
-            (run) =>
-              run.project_id === project.id &&
-              (run.status === "running" || run.status === "queued"),
+            (run) => run.project_id === project.id && isActive(run),
+          );
+          const waiting = runs.some(
+            (run) => run.project_id === project.id && run.status === "waiting",
           );
           const active = project.id === selectedProjectId && screen === "board";
           return (
@@ -91,16 +92,20 @@ export function Sidebar() {
                   running && "running-dot",
                 )}
                 style={{
-                  background: binding
-                    ? "var(--success)"
-                    : "var(--text-faint)",
+                  background: waiting
+                    ? "var(--warn)"
+                    : binding
+                      ? "var(--success)"
+                      : "var(--text-faint)",
                 }}
                 title={
-                  running
-                    ? "A run is in progress"
-                    : binding
-                      ? "Folder configured"
-                      : "No folder set"
+                  waiting
+                    ? "A run is waiting for your answer"
+                    : running
+                      ? "A run is in progress"
+                      : binding
+                        ? "Folder configured"
+                        : "No folder set"
                 }
               />
               <span
@@ -126,7 +131,14 @@ export function Sidebar() {
         <NavItem
           icon={<IconBoard />}
           label="Runs"
-          badge={activeRuns > 0 ? String(activeRuns) : undefined}
+          badge={
+            waitingRuns > 0
+              ? `${waitingRuns} waiting`
+              : activeRuns > 0
+                ? String(activeRuns)
+                : undefined
+          }
+          badgeTone={waitingRuns > 0 ? "warn" : "accent"}
           active={screen === "run"}
           onClick={() => openScreen("run")}
         />
@@ -159,12 +171,14 @@ function NavItem({
   icon,
   label,
   badge,
+  badgeTone = "accent",
   active,
   onClick,
 }: {
   icon: React.ReactNode;
   label: string;
   badge?: string;
+  badgeTone?: "accent" | "warn";
   active: boolean;
   onClick: () => void;
 }) {
@@ -179,7 +193,7 @@ function NavItem({
     >
       {icon}
       <span className="flex-1 text-left">{label}</span>
-      {badge && <Badge tone="accent">{badge}</Badge>}
+      {badge && <Badge tone={badgeTone}>{badge}</Badge>}
     </button>
   );
 }

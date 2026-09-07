@@ -262,6 +262,97 @@ source code, and do not commit.",
     )
 }
 
+// --- Questions ---------------------------------------------------------------
+
+/// One question an agent asked and the answer the user gave.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuestionRound {
+    pub question: String,
+    pub answer: String,
+}
+
+/// The protocol appended to a stage's prompt when questions are allowed
+/// (Yolo mode off). Mirrors the `VERDICT:` convention: a machine-readable
+/// final line, parsed leniently.
+const QUESTION_PROTOCOL: &str = "
+## If you are blocked on a decision only the user can make
+
+Prefer to proceed on your own best judgement. But if the work genuinely cannot
+be done right without an answer only the user has, stop working and end your
+response with the question on its own final line, exactly:
+
+QUESTION: your specific question
+
+The run will pause until the user answers, and you will then be run again with
+the answer included. Never ask about anything you could find out from the
+repository yourself, and never ask more than one question at a time.
+";
+
+/// The full prompt for one attempt at a stage: the stage's own prompt, any
+/// answers the user has already given, and — when questions are allowed — the
+/// protocol for asking one.
+pub fn compose_stage_prompt(base: &str, rounds: &[QuestionRound], may_ask: bool) -> String {
+    let mut out = base.to_string();
+
+    if !rounds.is_empty() {
+        out.push_str(
+            "\n## Answers from the user\n\nYou asked, and the user answered. Work with \
+these answers; do not ask again unless something new genuinely blocks you.\n\n",
+        );
+        for round in rounds {
+            out.push_str(&format!(
+                "- Q: {}\n  A: {}\n",
+                round.question.trim(),
+                round.answer.trim()
+            ));
+        }
+    }
+
+    if may_ask {
+        out.push_str(QUESTION_PROTOCOL);
+    }
+
+    out
+}
+
+/// Read a question out of an agent's closing message.
+///
+/// The last `QUESTION:` line wins, since an agent may quote the instruction
+/// earlier in its response; a quoted placeholder is not a question.
+pub fn parse_question(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut found: Option<String> = None;
+
+    for (index, line) in lines.iter().enumerate() {
+        let cleaned = line.trim().trim_start_matches(['#', '*', '-', '>', ' ']);
+        let Some(rest) = cleaned
+            .strip_prefix("QUESTION:")
+            .or_else(|| cleaned.strip_prefix("Question:"))
+            .or_else(|| cleaned.strip_prefix("question:"))
+        else {
+            continue;
+        };
+
+        let mut question = rest.trim_matches(['*', '`', ' ']).to_string();
+        // A question may run onto following lines; a blank line ends it.
+        for follow in &lines[index + 1..] {
+            let follow = follow.trim();
+            if follow.is_empty() {
+                break;
+            }
+            question.push(' ');
+            question.push_str(follow.trim_matches(['*', '`', ' ']));
+        }
+
+        // An echo of the instruction itself is not a question.
+        if !question.is_empty() && !question.starts_with('<') {
+            found = Some(question);
+        }
+    }
+
+    found
+}
+
 /// A reviewer's decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -467,6 +558,72 @@ mod tests {
                     but there is a bug.\n\
                     VERDICT: request_changes";
         assert_eq!(parse_verdict(text), Verdict::ChangesRequested);
+    }
+
+    #[test]
+    fn questions_are_read_from_the_final_message() {
+        assert_eq!(
+            parse_question("I looked around.\nQUESTION: Should the limit be per user or per tenant?"),
+            Some("Should the limit be per user or per tenant?".into())
+        );
+        assert_eq!(
+            parse_question("**Question:** `Which database?`"),
+            Some("Which database?".into())
+        );
+    }
+
+    #[test]
+    fn a_multi_line_question_survives_up_to_the_first_blank_line() {
+        let text = "QUESTION: The task says port 8080\nbut the config says 3000 — which one?\n\nUnrelated trailing note.";
+        assert_eq!(
+            parse_question(text),
+            Some("The task says port 8080 but the config says 3000 — which one?".into())
+        );
+    }
+
+    #[test]
+    fn the_last_question_wins_over_a_quoted_instruction() {
+        let text = "I was told to end with QUESTION: your specific question\n\
+                    if blocked.\n\
+                    QUESTION: Is the public API allowed to change?";
+        assert_eq!(
+            parse_question(text),
+            Some("Is the public API allowed to change?".into())
+        );
+    }
+
+    #[test]
+    fn an_echoed_placeholder_is_not_a_question() {
+        assert_eq!(parse_question("QUESTION: <one specific question>"), None);
+        assert_eq!(parse_question("QUESTION:"), None);
+        assert_eq!(parse_question("All done, no questions."), None);
+    }
+
+    #[test]
+    fn the_protocol_is_only_appended_when_questions_are_allowed() {
+        let base = implementer_prompt(&context(), None, None);
+
+        let yolo = compose_stage_prompt(&base, &[], false);
+        assert_eq!(yolo, base);
+        assert!(!yolo.contains("QUESTION:"));
+
+        let asking = compose_stage_prompt(&base, &[], true);
+        assert!(asking.contains("QUESTION:"));
+        assert!(asking.contains("pause until the user answers"));
+    }
+
+    #[test]
+    fn answered_questions_are_carried_into_the_next_attempt() {
+        let rounds = vec![QuestionRound {
+            question: "Per user or per tenant?".into(),
+            answer: "Per tenant.".into(),
+        }];
+        let prompt = compose_stage_prompt("Do the task.", &rounds, true);
+        assert!(prompt.contains("Answers from the user"));
+        assert!(prompt.contains("Q: Per user or per tenant?"));
+        assert!(prompt.contains("A: Per tenant."));
+        // Asking again is still possible until the budget runs out.
+        assert!(prompt.contains("QUESTION:"));
     }
 
     #[test]

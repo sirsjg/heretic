@@ -68,6 +68,15 @@ are starting today, start with Heretic.
 - **Writes back what happened.** Status transitions and a summary comment go to
   Flux under the agent's name, so the board stays honest whether you are
   watching or not.
+- **Lets agents ask — if you allow it.** Yolo mode (the default) means agents
+  never stop to ask you anything. Switch it off for a project and an agent that
+  is genuinely blocked can pause its run with a question; the run waits, marked
+  *Waiting for you*, until you answer, and the stage then reruns with your
+  answer in hand.
+- **Puts the thinking where you want it.** Each model profile can set a
+  reasoning effort — a thinking budget for Claude Code, `model_reasoning_effort`
+  for Codex, `reasoningEffort` for OpenCode hosts — so the reviewer can think
+  hard while the implementation grind stays fast.
 
 <br>
 

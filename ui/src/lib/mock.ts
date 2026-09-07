@@ -20,6 +20,7 @@ import type {
   Task,
   TaskView,
 } from "./types";
+import { isActive } from "./types";
 
 const PROJECTS: Project[] = [
   {
@@ -262,7 +263,7 @@ const DEFAULT_SETTINGS: Settings = {
       base_branch: "main",
       isolation: "worktree",
       integration: "leave",
-      pipeline: { plan: true, review: true, document: false, max_revisions: 2 },
+      pipeline: { plan: true, review: true, document: false, max_revisions: 2, yolo: false },
       roles: {},
       auto_run: true,
       max_parallel: 2,
@@ -291,6 +292,7 @@ const RUN_SCRIPT: RunFeedItem[] = [
   { stage: "planning", role: "orchestrator", event: { type: "text", text: "Brief: create docs/README.md as an index, seed 15 ADRs using MADR, and add a CI check that fails when core packages change without docs." } },
   { stage: "implementing", role: "implementer", event: { type: "prompt", text: "You are implementing one task end to end in this repository.\n\n## Implementation brief\n\nThe orchestrator prepared this plan. Follow it unless you find it to be wrong.\n\nCreate docs/README.md as an index, seed 15 ADRs using MADR, and add a CI check that fails when core packages change without docs." } },
   { stage: "implementing", role: "implementer", event: { type: "text", text: "Starting on the knowledge base." } },
+  { stage: "implementing", role: "implementer", event: { type: "question", text: "docs/decisions/ already holds three numbered ADRs. Should I continue that sequence there, or start fresh under docs/adr/ as the brief says?" } },
   { stage: "implementing", role: "implementer", event: { type: "tool", name: "Write", detail: "AGENTS.md" } },
   { stage: "implementing", role: "implementer", event: { type: "tool", name: "Write", detail: "docs/README.md" } },
   { stage: "implementing", role: "implementer", event: { type: "tool", name: "Write", detail: "docs/adr/0001-monorepo-nextjs.md" } },
@@ -508,6 +510,8 @@ export class MockEngine {
   private settings: Settings = structuredClone(DEFAULT_SETTINGS);
   private epics = structuredClone(EPICS);
   private timers = new Set<ReturnType<typeof setTimeout>>();
+  /** Where a paused run picks the script back up once its question is answered. */
+  private pendingResume = new Map<string, number>();
 
   listProjects(): Project[] {
     return PROJECTS;
@@ -627,6 +631,31 @@ export class MockEngine {
     }
 
     const item = RUN_SCRIPT[index]!;
+
+    // A question pauses the run until answerQuestion() resumes it — unless
+    // the project runs in Yolo mode, where agents never get to ask and the
+    // scripted question is simply skipped.
+    if (item.event.type === "question") {
+      const yolo =
+        this.settings.bindings.find((b) => b.project_id === run.project_id)
+          ?.pipeline.yolo ?? true;
+      if (yolo) {
+        this.later(() => this.play(runId, index + 1), 0);
+        return;
+      }
+      run.status = "waiting";
+      run.question = {
+        stage: item.stage,
+        role: item.role,
+        question: item.event.text,
+      };
+      run.feed.push(item);
+      this.pendingResume.set(runId, index + 1);
+      this.emit({ kind: "run_output", run_id: runId, item });
+      this.emit({ kind: "run_updated", run: structuredClone(run) });
+      return;
+    }
+
     if (item.stage !== run.stage) {
       run.stage = item.stage;
       if (item.role) {
@@ -653,10 +682,30 @@ export class MockEngine {
     this.later(() => this.play(runId, index + 1), 620);
   }
 
+  answerQuestion(runId: string, answer: string): boolean {
+    const run = this.runs.get(runId);
+    const resumeAt = this.pendingResume.get(runId);
+    if (!run || run.status !== "waiting" || resumeAt === undefined) return false;
+
+    const stage = run.question?.stage ?? run.stage;
+    this.pendingResume.delete(runId);
+    run.status = "running";
+    run.question = null;
+
+    const item: RunFeedItem = { stage, role: null, event: { type: "answer", text: answer } };
+    run.feed.push(item);
+    this.emit({ kind: "run_output", run_id: runId, item });
+    this.emit({ kind: "run_updated", run: structuredClone(run) });
+    this.later(() => this.play(runId, resumeAt), 620);
+    return true;
+  }
+
   stopRun(runId: string): boolean {
     const run = this.runs.get(runId);
-    if (!run || run.status !== "running") return false;
+    if (!run || (run.status !== "running" && run.status !== "waiting")) return false;
+    this.pendingResume.delete(runId);
     run.status = "cancelled";
+    run.question = null;
     run.result = { kind: "cancelled" };
     run.finished_at = new Date().toISOString();
     this.emit({ kind: "run_updated", run: structuredClone(run) });
@@ -665,7 +714,7 @@ export class MockEngine {
 
   dismissRun(runId: string): boolean {
     const run = this.runs.get(runId);
-    if (!run || run.status === "running") return false;
+    if (!run || isActive(run)) return false;
     this.runs.delete(runId);
     return true;
   }

@@ -27,6 +27,7 @@ fn profile(base_url: Option<String>, model: Option<String>) -> ModelProfile {
         env: BTreeMap::new(),
         timeout_secs: Some(180),
         context_window: None,
+        reasoning_effort: None,
         autonomous: true,
     }
 }

@@ -105,6 +105,7 @@ pub fn run() {
             commands::list_runs,
             commands::start_task,
             commands::stop_run,
+            commands::answer_question,
             commands::dismiss_run,
             commands::tick_auto,
             commands::integrate_run,

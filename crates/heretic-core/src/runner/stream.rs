@@ -87,6 +87,11 @@ pub enum AgentEvent {
     /// planner's brief arriving at the implementer, the diff and the reviewer's
     /// notes arriving back.
     Prompt { text: String },
+    /// A question the agent asked the user (Yolo mode off). The run waits on
+    /// the answer.
+    Question { text: String },
+    /// The user's answer, on its way back to the agent.
+    Answer { text: String },
     /// The agent's closing summary, emitted once at the end of a run.
     ///
     /// Every field past `is_error` defaults on the way in: these are replayed
@@ -118,6 +123,8 @@ impl AgentEvent {
             },
             AgentEvent::Raw { text } => text.clone(),
             AgentEvent::Error { message } => format!("Error: {message}"),
+            AgentEvent::Question { text } => format!("Question: {text}"),
+            AgentEvent::Answer { text } => format!("Answer: {text}"),
             AgentEvent::Usage { .. } => String::new(),
             // A prompt can be thousands of words. It belongs in the feed, where
             // it can be unfolded on demand, never in a tail or a Flux comment.
