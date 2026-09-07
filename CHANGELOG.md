@@ -1,3 +1,25 @@
+## [0.6.0](https://github.com/sirsjg/heretic/compare/v0.5.0...v0.6.0) (2026-09-07)
+
+### Features
+
+* **linear:** work Linear boards alongside Flux ([7ef2d4d](https://github.com/sirsjg/heretic/commit/7ef2d4d91e6228e351f62afd08d2293d6ac3199c))
+
+### Bug Fixes
+
+* **linear:** fail closed when a task cannot be classified or blocked ([1ebfbde](https://github.com/sirsjg/heretic/commit/1ebfbde8cd3367147ff7fbe81d24f48b4f2b5f1f))
+* **linear:** judge blockers by their own state, and keep the UI's settings fresh ([6b26b8b](https://github.com/sirsjg/heretic/commit/6b26b8b34b671e83c26f47de54e26009c17812c4))
+
+### Styles
+
+* reformat for the current rustfmt stable ([5b4bc0b](https://github.com/sirsjg/heretic/commit/5b4bc0bddb6c37ecb78882075b5fe69f7384ec8c))
+
+### Chores
+
+* **deps:** bump the cargo group across 1 directory with 3 updates ([#10](https://github.com/sirsjg/heretic/issues/10)) ([59159f9](https://github.com/sirsjg/heretic/commit/59159f9bb3ced7a7a70593e1460eba460c4c0acc))
+* **deps:** bump the npm group across 1 directory with 4 updates ([#11](https://github.com/sirsjg/heretic/issues/11)) ([4cabde8](https://github.com/sirsjg/heretic/commit/4cabde8aea25ca74b25edc69fa61815e9f31f252))
+* **deps:** bump typescript from 5.9.3 to 7.0.2 ([#8](https://github.com/sirsjg/heretic/issues/8)) ([a937e59](https://github.com/sirsjg/heretic/commit/a937e59432a73c31837057a17c6579a2371204a9))
+* **deps:** bump vite from 7.3.6 to 8.2.2 ([#9](https://github.com/sirsjg/heretic/issues/9)) ([b8ce870](https://github.com/sirsjg/heretic/commit/b8ce870ddf35601bcfe70ab75686769e389cceb2))
+
 ## [0.5.0](https://github.com/sirsjg/heretic/compare/v0.4.0...v0.5.0) (2026-09-07)
 
 ### Features
