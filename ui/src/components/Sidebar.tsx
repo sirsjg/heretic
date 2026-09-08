@@ -4,6 +4,7 @@ import { isActive } from "../lib/types";
 import { Badge, Dot, cx } from "./ui";
 import {
   IconBoard,
+  IconClose,
   IconModels,
   IconMoon,
   IconRefresh,
@@ -25,21 +26,45 @@ export function Sidebar() {
     toggleTheme,
     syncing,
     syncFromFlux,
+    menuOpen,
+    setMenuOpen,
   } = useStore();
 
   const activeRuns = runs.filter(isActive).length;
   const waitingRuns = runs.filter((run) => run.status === "waiting").length;
 
   return (
+    <>
+      {/* On a phone the sidebar is a drawer; this is the backdrop behind it. */}
+      {menuOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50 md:hidden"
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
     <aside
       style={{ background: "var(--surface)" }}
-      className="flex w-60 shrink-0 flex-col border-r"
+      className={cx(
+        "w-60 shrink-0 flex-col border-r",
+        // Wide: always there. Narrow: a drawer, shown only when opened.
+        "md:flex",
+        menuOpen
+          ? "drawer fixed inset-y-0 left-0 z-40 flex max-md:shadow-2xl"
+          : "hidden",
+      )}
     >
       <div
         data-tauri-drag-region="deep"
         className="titlebar-safe flex h-14 items-center px-4 pt-1"
       >
         <span className="font-brand text-[19px] font-bold tracking-wide">Heretic</span>
+        <button
+          onClick={() => setMenuOpen(false)}
+          className="ml-auto rounded p-1 text-[var(--text-faint)] md:hidden"
+          aria-label="Close"
+        >
+          <IconClose className="size-4" />
+        </button>
       </div>
 
       <ConnectionPill connection={connection} url={settings?.flux.base_url} />
@@ -133,6 +158,7 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t p-2">
+        <div className="max-md:hidden">
         <NavItem
           icon={<IconBoard />}
           label="Runs"
@@ -153,6 +179,7 @@ export function Sidebar() {
           active={screen === "models"}
           onClick={() => openScreen("models")}
         />
+        </div>
 
         <button
           onClick={toggleTheme}
@@ -161,14 +188,17 @@ export function Sidebar() {
           {theme === "dark" ? <IconSun /> : <IconMoon />}
           {theme === "dark" ? "Light theme" : "Dark theme"}
         </button>
+        <div className="max-md:hidden">
         <NavItem
           icon={<IconSettings />}
           label="Settings"
           active={screen === "settings"}
           onClick={() => openScreen("settings")}
         />
+        </div>
       </div>
     </aside>
+    </>
   );
 }
 

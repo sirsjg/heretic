@@ -1,19 +1,21 @@
 //! Tauri commands — the API the interface calls.
 //!
+//! Each one hands straight to `heretic_core::Service`, which is where the
+//! behaviour lives; the remote server exposes the same calls over HTTP. The
+//! only command that could not be moved is signing in, which needs a window.
+//!
 //! Every command returns `Result<_, String>` because Tauri surfaces the error
-//! string directly to the caller, and the interface shows it to the user. The
-//! messages are therefore written to be read by a person, not a developer.
+//! string directly to the caller, and the interface shows it to the user.
 
 use crate::state::AppState;
 use heretic_core::config::{ProjectBinding, Settings};
-use heretic_core::detect::{self, CliStatus, HostProbe, ModelHost};
-use heretic_core::model::{Epic, Project, SourceKind, Task};
+use heretic_core::detect::{self, HostProbe, ModelHost};
+use heretic_core::model::{Project, SourceKind};
 use heretic_core::orchestrator::RunRecord;
-use heretic_core::selection::BoardSnapshot;
+use heretic_core::service::{BoardView, ConnectionState, Environment};
 use heretic_core::worktree::{Commit, FileChange};
-use heretic_core::{Engine, FluxClient, LinearClient, TaskSource};
-use serde::Serialize;
-use std::collections::HashSet;
+use heretic_core::FluxClient;
+use heretic_server::RemoteStatus;
 use tauri::{Manager, State};
 
 /// Label of the sign-in window, so a second attempt reuses it.
@@ -24,186 +26,39 @@ const SIGN_IN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300)
 
 type Response<T> = Result<T, String>;
 
-/// A task plus whether Heretic may start it, and why not.
-#[derive(Serialize)]
-pub struct TaskView {
-    task: Task,
-    ineligible: Option<&'static str>,
-}
-
-/// Everything one board screen needs, in a single round trip.
-#[derive(Serialize)]
-pub struct BoardView {
-    project: Project,
-    epics: Vec<Epic>,
-    tasks: Vec<TaskView>,
-    /// Task ids that could be started now, most important first.
-    ready: Vec<String>,
-}
-
-#[derive(Serialize)]
-pub struct ConnectionState {
-    connected: bool,
-    error: Option<String>,
-    /// What kind of problem it is, so the interface can point at the fix rather
-    /// than showing one undifferentiated red dot.
-    kind: &'static str,
-    /// Configuration that will bite later, even when the connection works.
-    warnings: Vec<String>,
-}
-
-async fn client(state: &State<'_, AppState>) -> Response<FluxClient> {
-    let settings = state.engine.settings().await;
-    FluxClient::new(settings.flux).map_err(|error| error.to_string())
-}
-
-/// The client for one project's tracker. `source` comes from the interface
-/// (which knows where a project was listed from); a saved binding is the
-/// fallback, and Flux the default, so pre-existing callers keep working.
-async fn source_client(
-    state: &State<'_, AppState>,
-    project_id: &str,
-    source: Option<SourceKind>,
-) -> Response<std::sync::Arc<dyn TaskSource>> {
-    let settings = state.engine.settings().await;
-    let kind = source
-        .or_else(|| settings.binding(project_id).map(|b| b.source))
-        .unwrap_or_default();
-    Engine::source_for(&settings, kind).map_err(|error| error.to_string())
-}
-
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> Response<Settings> {
-    Ok(state.engine.settings().await)
+    Ok(state.service.settings().await)
 }
 
 #[tauri::command]
 pub async fn save_settings(state: State<'_, AppState>, settings: Settings) -> Response<()> {
-    state
-        .store
-        .save(&settings)
-        .map_err(|error| error.to_string())?;
-    state.engine.set_settings(settings).await;
+    state.service.save_settings(settings).await?;
+    // Apply a change to remote access now rather than on the next check, so
+    // the Settings screen sees the listener come up as the switch is flipped.
+    state.remote.reconcile().await;
     Ok(())
 }
 
 /// Insert or update one project's binding, leaving the rest of the settings alone.
 #[tauri::command]
 pub async fn save_binding(state: State<'_, AppState>, binding: ProjectBinding) -> Response<()> {
-    let mut settings = state.engine.settings().await;
-    settings.upsert_binding(binding);
-    state
-        .store
-        .save(&settings)
-        .map_err(|error| error.to_string())?;
-    state.engine.set_settings(settings).await;
-    Ok(())
+    state.service.save_binding(binding).await
 }
 
 #[tauri::command]
 pub async fn test_connection(state: State<'_, AppState>) -> Response<ConnectionState> {
-    let settings = state.engine.settings().await;
-    let warnings = settings.flux.access_warnings();
-
-    let client = match client(&state).await {
-        Ok(client) => client,
-        Err(error) => {
-            return Ok(ConnectionState {
-                connected: false,
-                error: Some(error),
-                kind: "unreachable",
-                warnings,
-            })
-        }
-    };
-
-    // Listing projects exercises the whole path: the proxy, then Flux's own key.
-    match client.list_projects().await {
-        Ok(_) => {
-            // Success is not proof of authentication. A server that requires a
-            // key still answers a keyless GET with the public projects — an
-            // empty list for a private board, which looks exactly like a
-            // connected server with nothing on it.
-            if let Ok(status) = client.auth_status().await {
-                if status.needs_key() {
-                    let base = settings.flux.normalised_base();
-                    return Ok(ConnectionState {
-                        connected: false,
-                        error: Some(format!(
-                            "This Flux server requires an API key, and none was accepted — so only \
-public projects are visible. Create a key at {base}/auth and paste it above."
-                        )),
-                        kind: "flux_auth",
-                        warnings,
-                    });
-                }
-            }
-
-            Ok(ConnectionState {
-                connected: true,
-                error: None,
-                kind: "ok",
-                warnings,
-            })
-        }
-        Err(error) => {
-            let (kind, message) = if error.is_proxy_challenge() {
-                ("proxy_challenge", error.to_string())
-            } else if error.is_auth() {
-                (
-                    "flux_auth",
-                    "Flux rejected the API key. Check it in Settings.".to_string(),
-                )
-            } else {
-                ("unreachable", error.to_string())
-            };
-
-            Ok(ConnectionState {
-                connected: false,
-                error: Some(message),
-                kind,
-                warnings,
-            })
-        }
-    }
+    state.service.test_connection().await
 }
 
-/// Projects from every configured tracker, each stamped with its source.
-///
-/// One tracker failing must not blank the other's board, so failures are only
-/// fatal when nothing could be listed at all; the per-tracker connection tests
-/// in Settings are where a broken credential gets diagnosed.
+#[tauri::command]
+pub async fn test_linear_connection(state: State<'_, AppState>) -> Response<ConnectionState> {
+    state.service.test_linear_connection().await
+}
+
 #[tauri::command]
 pub async fn list_projects(state: State<'_, AppState>) -> Response<Vec<Project>> {
-    let settings = state.engine.settings().await;
-
-    let mut projects: Vec<Project> = Vec::new();
-    let mut failures: Vec<String> = Vec::new();
-
-    match client(&state).await {
-        Ok(flux) => match flux.list_projects().await {
-            Ok(mut listed) => projects.append(&mut listed),
-            Err(error) => failures.push(error.to_string()),
-        },
-        Err(error) => failures.push(error),
-    }
-
-    if settings.linear_enabled() {
-        match Engine::source_for(&settings, SourceKind::Linear) {
-            Ok(linear) => match linear.list_projects().await {
-                Ok(mut listed) => projects.append(&mut listed),
-                Err(error) => failures.push(error.to_string()),
-            },
-            Err(error) => failures.push(error.to_string()),
-        }
-    }
-
-    if projects.is_empty() {
-        if let Some(failure) = failures.into_iter().next() {
-            return Err(failure);
-        }
-    }
-    Ok(projects)
+    state.service.list_projects().await
 }
 
 #[tauri::command]
@@ -212,48 +67,9 @@ pub async fn get_board(
     project_id: String,
     source: Option<SourceKind>,
 ) -> Response<BoardView> {
-    let client = source_client(&state, &project_id, source).await?;
-
-    let (project, epics, tasks) = tokio::try_join!(
-        client.get_project(&project_id),
-        client.list_epics(&project_id),
-        client.list_tasks(&project_id),
-    )
-    .map_err(|error| error.to_string())?;
-
-    let running: HashSet<String> = state.engine.running_task_ids().await;
-    let board = BoardSnapshot {
-        epics: &epics,
-        tasks: &tasks,
-    };
-
-    let ready: Vec<String> = board
-        .candidates(&running)
-        .into_iter()
-        .map(|candidate| candidate.task.id)
-        .collect();
-
-    let views = tasks
-        .iter()
-        .map(|task| TaskView {
-            task: task.clone(),
-            ineligible: board.eligibility(task, &running).map(|why| why.describe()),
-        })
-        .collect();
-
-    Ok(BoardView {
-        project,
-        epics,
-        tasks: views,
-        ready,
-    })
+    state.service.board(&project_id, source).await
 }
 
-/// Flip an epic's Auto switch.
-///
-/// On Flux this writes to the server, so the change is visible on the board
-/// and to anything else watching it. Linear has no such field, so the flag is
-/// Heretic's own, kept in settings alongside the connection.
 #[tauri::command]
 pub async fn set_epic_auto(
     state: State<'_, AppState>,
@@ -261,82 +77,12 @@ pub async fn set_epic_auto(
     auto: bool,
     source: Option<SourceKind>,
 ) -> Response<()> {
-    match source.unwrap_or_default() {
-        SourceKind::Flux => client(&state)
-            .await?
-            .set_epic_auto(&epic_id, auto)
-            .await
-            .map(|_| ())
-            .map_err(|error| error.to_string()),
-        SourceKind::Linear => {
-            let mut settings = state.engine.settings().await;
-            let linear = settings.linear.get_or_insert_with(Default::default);
-            if auto {
-                if !linear.auto_epics.contains(&epic_id) {
-                    linear.auto_epics.push(epic_id);
-                }
-            } else {
-                linear.auto_epics.retain(|id| id != &epic_id);
-            }
-            state
-                .store
-                .save(&settings)
-                .map_err(|error| error.to_string())?;
-            state.engine.set_settings(settings).await;
-            Ok(())
-        }
-    }
-}
-
-/// Exercise the Linear connection: one authenticated whoami round trip.
-#[tauri::command]
-pub async fn test_linear_connection(state: State<'_, AppState>) -> Response<ConnectionState> {
-    let settings = state.engine.settings().await;
-
-    if !settings.linear_enabled() {
-        return Ok(ConnectionState {
-            connected: false,
-            error: Some("No Linear API key is set.".into()),
-            kind: "unconfigured",
-            warnings: Vec::new(),
-        });
-    }
-
-    let client = match LinearClient::new(settings.linear.clone().unwrap_or_default()) {
-        Ok(client) => client,
-        Err(error) => {
-            return Ok(ConnectionState {
-                connected: false,
-                error: Some(error.to_string()),
-                kind: "unreachable",
-                warnings: Vec::new(),
-            })
-        }
-    };
-
-    match client.viewer_name().await {
-        Ok(_) => Ok(ConnectionState {
-            connected: true,
-            error: None,
-            kind: "ok",
-            warnings: Vec::new(),
-        }),
-        Err(error) => Ok(ConnectionState {
-            connected: false,
-            error: Some(error.to_string()),
-            kind: if error.is_auth() {
-                "linear_auth"
-            } else {
-                "unreachable"
-            },
-            warnings: Vec::new(),
-        }),
-    }
+    state.service.set_epic_auto(&epic_id, auto, source).await
 }
 
 #[tauri::command]
 pub async fn list_runs(state: State<'_, AppState>) -> Response<Vec<RunRecord>> {
-    Ok(state.engine.runs().await)
+    Ok(state.service.runs().await)
 }
 
 #[tauri::command]
@@ -345,113 +91,72 @@ pub async fn start_task(
     project_id: String,
     task_id: String,
 ) -> Response<String> {
-    state
-        .engine
-        .start_task(&project_id, &task_id)
-        .await
-        .map_err(|error| error.to_string())
+    state.service.start_task(&project_id, &task_id).await
 }
 
 #[tauri::command]
 pub async fn stop_run(state: State<'_, AppState>, run_id: String) -> Response<bool> {
-    Ok(state.engine.stop_run(&run_id).await)
+    Ok(state.service.stop_run(&run_id).await)
 }
 
-/// Answer the question a paused run is waiting on. Returns false when the run
-/// is no longer waiting — stopped, finished, or already answered.
 #[tauri::command]
 pub async fn answer_question(
     state: State<'_, AppState>,
     run_id: String,
     answer: String,
 ) -> Response<bool> {
-    Ok(state.engine.answer_question(&run_id, answer).await)
+    Ok(state.service.answer_question(&run_id, answer).await)
 }
 
 #[tauri::command]
 pub async fn dismiss_run(state: State<'_, AppState>, run_id: String) -> Response<bool> {
-    Ok(state.engine.dismiss_run(&run_id).await)
+    Ok(state.service.dismiss_run(&run_id).await)
 }
 
-/// Merge a finished run's branch into the branch it came from, then remove its
-/// worktree.
 #[tauri::command]
 pub async fn integrate_run(state: State<'_, AppState>, run_id: String) -> Response<()> {
-    state
-        .engine
-        .integrate_run(&run_id)
-        .await
-        .map_err(|error| error.to_string())
+    state.service.integrate_run(&run_id).await
 }
 
-/// Throw a finished run's work away: worktree removed, branch deleted.
 #[tauri::command]
 pub async fn discard_run_work(state: State<'_, AppState>, run_id: String) -> Response<()> {
-    state
-        .engine
-        .discard_run_work(&run_id)
-        .await
-        .map_err(|error| error.to_string())
+    state.service.discard_run_work(&run_id).await
 }
 
-// --- Reading a run's work ----------------------------------------------------
-
-/// Every file a run touched, with its line counts — the list behind the
-/// Changes tab.
 #[tauri::command]
 pub async fn run_changed_files(
     state: State<'_, AppState>,
     run_id: String,
 ) -> Response<Vec<FileChange>> {
-    state
-        .engine
-        .run_changed_files(&run_id)
-        .await
-        .map_err(|error| error.to_string())
+    state.service.run_changed_files(&run_id).await
 }
 
-/// One file's diff, as a unified patch.
 #[tauri::command]
 pub async fn run_file_diff(
     state: State<'_, AppState>,
     run_id: String,
     path: String,
 ) -> Response<String> {
-    state
-        .engine
-        .run_file_diff(&run_id, &path)
-        .await
-        .map_err(|error| error.to_string())
+    state.service.run_file_diff(&run_id, &path).await
 }
 
-/// The commits a run put on its branch, newest first.
 #[tauri::command]
 pub async fn run_commits(state: State<'_, AppState>, run_id: String) -> Response<Vec<Commit>> {
-    state
-        .engine
-        .run_commits(&run_id)
-        .await
-        .map_err(|error| error.to_string())
+    state.service.run_commits(&run_id).await
 }
 
-/// The patch one of those commits introduced.
 #[tauri::command]
 pub async fn run_commit_diff(
     state: State<'_, AppState>,
     run_id: String,
     sha: String,
 ) -> Response<String> {
-    state
-        .engine
-        .run_commit_diff(&run_id, &sha)
-        .await
-        .map_err(|error| error.to_string())
+    state.service.run_commit_diff(&run_id, &sha).await
 }
 
-/// Start whatever auto-enabled work is ready right now.
 #[tauri::command]
 pub async fn tick_auto(state: State<'_, AppState>) -> Response<Vec<String>> {
-    Ok(state.engine.tick_auto().await)
+    Ok(state.service.tick_auto().await)
 }
 
 // --- Signing in through an identity proxy ------------------------------------
@@ -465,7 +170,7 @@ pub async fn tick_auto(state: State<'_, AppState>) -> Response<Vec<String>> {
 /// under Settings → Access instead.
 #[tauri::command]
 pub async fn flux_sign_in(app: tauri::AppHandle, state: State<'_, AppState>) -> Response<String> {
-    let settings = state.engine.settings().await;
+    let settings = state.service.settings().await;
     let base = settings.flux.normalised_base();
 
     let url = tauri::Url::parse(&base).map_err(|_| format!("{base} is not a valid URL."))?;
@@ -504,11 +209,7 @@ pub async fn flux_sign_in(app: tauri::AppHandle, state: State<'_, AppState>) -> 
 
             if let Ok(client) = FluxClient::new(candidate.clone()) {
                 if client.list_projects().await.is_ok() {
-                    let mut saved = state.engine.settings().await;
-                    saved.flux.cookie = Some(cookie);
-                    state.store.save(&saved).map_err(|e| e.to_string())?;
-                    state.engine.set_settings(saved).await;
-
+                    state.service.keep_cookie(cookie).await?;
                     let _ = window.close();
                     return Ok("Signed in.".to_string());
                 }
@@ -522,11 +223,7 @@ pub async fn flux_sign_in(app: tauri::AppHandle, state: State<'_, AppState>) -> 
 /// Forget the stored session cookie.
 #[tauri::command]
 pub async fn flux_sign_out(state: State<'_, AppState>) -> Response<()> {
-    let mut settings = state.engine.settings().await;
-    settings.flux.cookie = None;
-    state.store.save(&settings).map_err(|e| e.to_string())?;
-    state.engine.set_settings(settings).await;
-    Ok(())
+    state.service.sign_out().await
 }
 
 /// Every cookie the webview holds for the Flux origin, as a `Cookie` header value.
@@ -545,68 +242,28 @@ fn collect_cookies(window: &tauri::WebviewWindow, url: &tauri::Url) -> Option<St
 
 // --- Discovering what is available to run ------------------------------------
 
-/// Everything Heretic can find: agent CLIs on this machine, and the models
-/// each configured host is holding.
-#[derive(Serialize)]
-pub struct Environment {
-    clis: Vec<CliStatus>,
-    hosts: Vec<HostProbe>,
-    /// Which platform this is, so the interface can leave room for macOS
-    /// window controls.
-    os: &'static str,
-}
-
-/// Scan for agent CLIs and model hosts.
-///
-/// Hosts are probed concurrently: a machine that is asleep should not hold up
-/// the ones that are awake.
 #[tauri::command]
 pub async fn detect_environment(state: State<'_, AppState>) -> Response<Environment> {
-    let settings = state.engine.settings().await;
-    let (clis, hosts) = tokio::join!(detect::probe_clis(), detect::probe_hosts(&settings.hosts));
-
-    Ok(Environment {
-        clis,
-        hosts,
-        os: std::env::consts::OS,
-    })
+    Ok(state.service.detect_environment().await)
 }
 
-/// Look at one address without saving it, so a host can be checked before it is
-/// added.
 #[tauri::command]
-pub async fn probe_host(name: String, base_url: String) -> Response<HostProbe> {
-    let host = ModelHost {
-        id: "probe".into(),
-        name,
-        base_url,
-    };
-    Ok(detect::probe_host(&host).await)
+pub async fn probe_host(
+    state: State<'_, AppState>,
+    name: String,
+    base_url: String,
+) -> Response<HostProbe> {
+    Ok(state.service.probe_host(name, base_url).await)
 }
 
-/// Add or update a model host.
 #[tauri::command]
 pub async fn save_host(state: State<'_, AppState>, host: ModelHost) -> Response<()> {
-    let mut settings = state.engine.settings().await;
-    // Store the address in a canonical form so `/v1` pasted by hand does not
-    // become `/v1/v1` later.
-    let host = ModelHost {
-        base_url: detect::normalise_host_base(&host.base_url),
-        ..host
-    };
-    settings.upsert_host(host);
-    state.store.save(&settings).map_err(|e| e.to_string())?;
-    state.engine.set_settings(settings).await;
-    Ok(())
+    state.service.save_host(host).await
 }
 
 #[tauri::command]
 pub async fn remove_host(state: State<'_, AppState>, host_id: String) -> Response<()> {
-    let mut settings = state.engine.settings().await;
-    settings.remove_host(&host_id);
-    state.store.save(&settings).map_err(|e| e.to_string())?;
-    state.engine.set_settings(settings).await;
-    Ok(())
+    state.service.remove_host(&host_id).await
 }
 
 /// Which platform this is. Called once at startup, so the interface can leave
@@ -620,4 +277,27 @@ pub fn platform() -> &'static str {
 #[tauri::command]
 pub fn openai_base(base_url: String) -> String {
     detect::openai_base(&base_url)
+}
+
+// --- Remote access -----------------------------------------------------------
+
+/// Whether the listener is up, where, and the link a phone pairs with.
+#[tauri::command]
+pub async fn remote_status(state: State<'_, AppState>) -> Response<RemoteStatus> {
+    Ok(state.remote.status().await)
+}
+
+/// Mint a new token, logging every paired device out.
+#[tauri::command]
+pub async fn rotate_remote_token(state: State<'_, AppState>) -> Response<String> {
+    let token = state.service.rotate_remote_token().await?;
+    state.remote.reconcile().await;
+    Ok(token)
+}
+
+/// Post a test message to whatever notification services are configured.
+#[tauri::command]
+pub async fn test_notifications(state: State<'_, AppState>) -> Response<()> {
+    let settings = state.service.settings().await;
+    heretic_core::notify::deliver_test(&settings.notifications).await
 }

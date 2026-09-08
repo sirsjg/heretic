@@ -188,6 +188,49 @@ export function emptyLinearConfig(): LinearConfig {
   };
 }
 
+/** Serving this interface to a phone or another machine. */
+export interface RemoteConfig {
+  enabled: boolean;
+  /** `127.0.0.1` for this machine only, `0.0.0.0` for every interface, or one address. */
+  bind: string;
+  port: number;
+  /** The bearer token a remote client presents. Minted when remote access is first enabled. */
+  token?: string | null;
+  /** Where the server is reached from outside, when not simply http://address:port. */
+  public_url?: string | null;
+}
+
+export interface NtfyConfig {
+  server: string;
+  topic: string;
+  token?: string | null;
+}
+
+export interface PushoverConfig {
+  user_key: string;
+  app_token: string;
+}
+
+/** Push notifications for the moments a run needs a person. */
+export interface NotifyConfig {
+  ntfy?: NtfyConfig | null;
+  pushover?: PushoverConfig | null;
+  /** Also say when a run finishes cleanly and is merged. */
+  on_success: boolean;
+}
+
+export function emptyRemoteConfig(): RemoteConfig {
+  return { enabled: false, bind: "127.0.0.1", port: 7411, token: null, public_url: null };
+}
+
+export function emptyNotifyConfig(): NotifyConfig {
+  return { ntfy: null, pushover: null, on_success: false };
+}
+
+export function emptyNtfyConfig(): NtfyConfig {
+  return { server: "https://ntfy.sh", topic: "", token: null };
+}
+
 export interface Settings {
   flux: FluxConfig;
   /** The Linear connection, when one is configured. */
@@ -196,6 +239,33 @@ export interface Settings {
   roles: Partial<Record<Role, string>>;
   bindings: ProjectBinding[];
   hosts: ModelHost[];
+  /** Absent in settings saved before remote access existed. */
+  remote?: RemoteConfig;
+  notifications?: NotifyConfig;
+}
+
+/** One address a phone could reach the remote server at. */
+export interface RemoteAddress {
+  ip: string;
+  label: string;
+  url: string;
+  tailscale: boolean;
+}
+
+/** What the desktop reports about its remote listener. */
+export interface RemoteStatus {
+  enabled: boolean;
+  /** The socket address actually bound, once listening. */
+  listening?: string | null;
+  /** Why it is not listening, when it should be. */
+  error?: string | null;
+  addresses: RemoteAddress[];
+  /** Every address this machine has, for choosing what to bind to. */
+  interfaces: RemoteAddress[];
+  /** The link a phone opens to pair: the interface's address with the token in the fragment. */
+  pairing_url?: string | null;
+  /** The same link as a QR code, as inline SVG. */
+  pairing_qr?: string | null;
 }
 
 // --- Discovery --------------------------------------------------------------
@@ -448,7 +518,9 @@ export interface RunRecord {
 export type EngineEvent =
   | { kind: "run_updated"; run: RunRecord }
   | { kind: "run_output"; run_id: string; item: RunFeedItem }
-  | { kind: "notice"; level: string; message: string };
+  | { kind: "notice"; level: string; message: string }
+  /** The remote server dropped events a slow connection could not keep up with. */
+  | { kind: "lagged" };
 
 /** What the Rust side relays from Flux's live event stream. */
 export type FluxEvent =

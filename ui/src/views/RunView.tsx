@@ -77,8 +77,10 @@ export function RunView() {
 
   // The panel layout is a working preference, not application state: it belongs
   // to this machine and should survive a restart without going near the engine.
+  // A phone has no room for a second column, so there the panel starts
+  // closed and opens over the feed.
   const [inspectorOpen, setInspectorOpen] = useState(
-    () => remembered("heretic.runs.inspector.open", "1") === "1",
+    () => !isNarrow() && remembered("heretic.runs.inspector.open", "1") === "1",
   );
   const [inspectorWidth, setInspectorWidth] = useState(() =>
     Number(remembered("heretic.runs.inspector.width", String(INSPECTOR_DEFAULT))),
@@ -131,7 +133,8 @@ export function RunView() {
         />
       )}
 
-      <div className="flex min-w-[340px] flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col md:min-w-[340px]">
+        {runs.length > 1 && <RunStrip runs={runs} selectedId={run.id} onSelect={openRun} />}
         <RunHeader
           run={run}
           inspectorOpen={inspectorOpen}
@@ -151,21 +154,81 @@ export function RunView() {
 
       {inspectorOpen && (
         <>
-          <Resizer
-            width={inspectorWidth}
-            onWidth={setWidth}
-            onReset={() => setWidth(INSPECTOR_DEFAULT)}
-            invert
-          />
-          <RunInspector
-            run={run}
-            tab={tab}
-            onTab={openTab}
-            onClose={() => showInspector(false)}
-            width={inspectorWidth}
-          />
+          <div className="hidden md:contents">
+            <Resizer
+              width={inspectorWidth}
+              onWidth={setWidth}
+              onReset={() => setWidth(INSPECTOR_DEFAULT)}
+              invert
+            />
+            <RunInspector
+              run={run}
+              tab={tab}
+              onTab={openTab}
+              onClose={() => showInspector(false)}
+              width={inspectorWidth}
+            />
+          </div>
+          <div className="inspector-sheet fixed inset-0 z-20 flex md:hidden">
+            <RunInspector
+              run={run}
+              tab={tab}
+              onTab={openTab}
+              onClose={() => showInspector(false)}
+              width={inspectorWidth}
+              fullWidth
+            />
+          </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** Whether this is a phone-sized window, where the layout stacks. */
+function isNarrow(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+}
+
+/**
+ * The run rail, flattened into a strip of chips for a window too narrow to
+ * give it a column. The rail hides itself below 1100px; this shows there.
+ */
+function RunStrip({
+  runs,
+  selectedId,
+  onSelect,
+}: {
+  runs: RunRecord[];
+  selectedId: string;
+  onSelect: (runId: string) => void;
+}) {
+  return (
+    <div
+      className="flex shrink-0 gap-1.5 overflow-x-auto border-b px-3 py-2 min-[1101px]:hidden"
+      style={{ background: "var(--surface)", scrollbarWidth: "none" }}
+    >
+      {runs.map((run) => {
+        const selected = run.id === selectedId;
+        return (
+          <button
+            key={run.id}
+            onClick={() => onSelect(run.id)}
+            className={cx(
+              "flex max-w-[60vw] shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px]",
+              !selected && "text-[var(--text-muted)]",
+            )}
+            style={
+              selected
+                ? { background: "var(--accent-soft)", borderColor: "var(--accent)", color: "var(--accent-text)" }
+                : undefined
+            }
+          >
+            <Dot tone={STATUS_TONE[run.status]} pulse={isActive(run)} />
+            <span className="truncate">{run.task_title}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

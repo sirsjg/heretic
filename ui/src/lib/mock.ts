@@ -7,6 +7,7 @@
  */
 
 import type {
+  RemoteStatus,
   BoardView,
   EngineEvent,
   Epic,
@@ -269,6 +270,18 @@ const DEFAULT_SETTINGS: Settings = {
       max_parallel: 2,
     },
   ],
+  remote: {
+    enabled: true,
+    bind: "0.0.0.0",
+    port: 7411,
+    token: "5f1d2c9b8a7e6f5d4c3b2a1908f7e6d5c4b3a2918f7e6d5c4b3a29180f7e6d5c",
+    public_url: null,
+  },
+  notifications: {
+    ntfy: { server: "https://ntfy.sh", topic: "heretic-demo-4f9a", token: null },
+    pushover: null,
+    on_success: false,
+  },
 };
 
 /** Why a task cannot be started, mirroring the Rust selection rules. */
@@ -503,6 +516,27 @@ const RUN_COMMITS: RunCommit[] = [
   },
 ];
 
+const MOCK_INTERFACES = [
+  { ip: "100.101.7.42", label: "Tailscale", url: "http://100.101.7.42:7411", tailscale: true },
+  { ip: "192.168.1.23", label: "en0", url: "http://192.168.1.23:7411", tailscale: false },
+];
+
+/** A stand-in for the real QR code, which only the desktop can draw. */
+const PREVIEW_QR = (() => {
+  const cells: string[] = [];
+  let seed = 7;
+  for (let y = 0; y < 25; y++) {
+    for (let x = 0; x < 25; x++) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const finder =
+        (x < 7 && y < 7) || (x > 17 && y < 7) || (x < 7 && y > 17);
+      const ring = finder && (x % 18 === 0 || x % 18 === 6 || y % 18 === 0 || y % 18 === 6 || (x % 18 >= 2 && x % 18 <= 4 && y % 18 >= 2 && y % 18 <= 4));
+      if (finder ? ring : seed % 3 === 0) cells.push(`<rect x="${x + 2}" y="${y + 2}" width="1" height="1"/>`);
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 29 29" width="180" height="180" shape-rendering="crispEdges" fill="currentColor">${cells.join("")}</svg>`;
+})();
+
 /** A simulated engine that streams a scripted run, for developing the UI. */
 export class MockEngine {
   private runs = new Map<string, RunRecord>();
@@ -523,6 +557,29 @@ export class MockEngine {
 
   saveSettings(settings: Settings) {
     this.settings = structuredClone(settings);
+  }
+
+  remoteStatus(): RemoteStatus {
+    const remote = this.settings.remote;
+    if (!remote?.enabled) {
+      return { enabled: false, listening: null, error: null, addresses: [], interfaces: MOCK_INTERFACES, pairing_url: null, pairing_qr: null };
+    }
+    const url = `http://100.101.7.42:${remote.port}`;
+    return {
+      enabled: true,
+      listening: `0.0.0.0:${remote.port}`,
+      error: null,
+      addresses: MOCK_INTERFACES,
+      interfaces: MOCK_INTERFACES,
+      pairing_url: `${url}/#token=${remote.token}`,
+      pairing_qr: PREVIEW_QR,
+    };
+  }
+
+  rotateRemoteToken(): string {
+    const token = Array.from({ length: 64 }, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join("");
+    if (this.settings.remote) this.settings.remote.token = token;
+    return token;
   }
 
   board(projectId: string): BoardView {

@@ -1,0 +1,27 @@
+[package]
+name = "heretic-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Heretic's remote access: the same interface, served over HTTP to a phone or another machine"
+
+[[bin]]
+name = "heretic-serve"
+path = "src/bin/heretic-serve.rs"
+
+[dependencies]
+heretic-core = { path = "../heretic-core" }
+axum = { version = "0.8", features = ["ws"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+futures-util.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rust-embed = { version = "8", features = ["mime-guess"] }
+if-addrs = "0.14"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+[dev-dependencies]
+reqwest.workspace = true
