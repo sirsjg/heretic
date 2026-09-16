@@ -49,6 +49,27 @@ The engine (`crates/heretic-core`) is deliberately free of Tauri so orchestratio
 logic can be tested without launching a desktop app. Keep it that way — anything
 that needs a window belongs in `crates/heretic-app`.
 
+Everything an interface can ask the engine to do lives in
+`heretic_core::Service`. The desktop shell (`crates/heretic-app`) and the
+remote server (`crates/heretic-server`) are both thin over it: a Tauri command
+and an HTTP call for the same operation are one-liners that hand to the same
+method. A new capability goes in the service first, then gets a command and a
+line in the server's dispatch table — never logic in a shell.
+
+Both shells embed the built interface, so `pnpm build` has to run before the
+Rust crates will compile (`tauri-build` and `rust-embed` both want `ui/dist`
+to exist). The remote server can be exercised without the desktop app:
+
+```bash
+pnpm build
+HERETIC_CONFIG_DIR=/tmp/heretic cargo run -p heretic-server --bin heretic-serve -- --port 7499
+```
+
+The interface picks its transport from where it is running: Tauri's IPC inside
+the desktop window, HTTP when served by `heretic-server` (any built bundle in a
+browser), and the mock engine under `pnpm dev`. That switch is the whole of
+`ui/src/lib/bridge.ts`; nothing above it knows which one it is on.
+
 ## Commit messages
 
 Releases are cut automatically by

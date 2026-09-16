@@ -1,7 +1,8 @@
 /** Application state: what's loaded, what's selected, and what's running. */
 
 import { create } from "zustand";
-import { api, onEngineEvent, onFluxEvent } from "./bridge";
+import { api, isRemote, onConnectivity, onEngineEvent, onFluxEvent } from "./bridge";
+import * as remote from "./remote";
 import type {
   BoardView,
   ConnectionState,
@@ -37,12 +38,25 @@ interface State {
   theme: "dark" | "light";
   /** True while a Flux re-sync is in flight, so a refresh button can show it. */
   syncing: boolean;
+  /**
+   * Remote only: whether this browser holds a token the server accepts. The
+   * desktop and the mock are always paired.
+   */
+  paired: boolean;
+  /** Why pairing is needed, when a token was refused. */
+  pairingError: string | null;
+  /** Remote only: whether the event socket is open. */
+  online: boolean;
+  /** Whether the sidebar is open on a narrow screen. */
+  menuOpen: boolean;
 
   initialise: () => Promise<void>;
   selectProject: (projectId: string) => Promise<void>;
   refreshBoard: () => Promise<void>;
   /** Quietly re-read projects and the open board after Flux changes. */
   syncFromFlux: () => Promise<void>;
+  /** Re-read runs and the board after events may have been missed. */
+  resync: () => Promise<void>;
   openScreen: (screen: Screen) => void;
   openRun: (runId: string) => void;
   setEpicAuto: (epicId: string, auto: boolean) => Promise<void>;
@@ -62,6 +76,11 @@ interface State {
   toggleTheme: () => void;
   notify: (level: "info" | "error", message: string) => void;
   dismissToast: (id: number) => void;
+  /** Remote only: keep a token typed or scanned in, and start over. */
+  pair: (token: string) => Promise<void>;
+  /** Remote only: forget the token and show the pairing screen. */
+  unpair: () => void;
+  setMenuOpen: (open: boolean) => void;
 }
 
 let toastId = 0;
@@ -71,6 +90,7 @@ let toastId = 0;
 /// would apply every event twice — which shows up as a duplicated feed.
 let unsubscribeEngine: (() => void) | null = null;
 let unsubscribeFlux: (() => void) | null = null;
+let unsubscribeConnectivity: (() => void) | null = null;
 
 /// Flux announces every mutation separately; one drag on its board can be a
 /// burst of events. Collapse a burst into a single re-fetch.
@@ -105,6 +125,10 @@ export const useStore = create<State>((set, get) => ({
   connection: { connected: false },
   toasts: [],
   syncing: false,
+  paired: !isRemote() || remote.paired(),
+  pairingError: null,
+  online: true,
+  menuOpen: false,
   theme:
     (typeof localStorage !== "undefined" &&
       (localStorage.getItem("heretic.theme") as "dark" | "light" | null)) ||
@@ -118,6 +142,17 @@ export const useStore = create<State>((set, get) => ({
     const os = await api.platform().catch(() => "browser");
     document.documentElement.setAttribute("data-os", os);
 
+    // A pairing link carries the token in its fragment; a notification's link
+    // carries the run to open. Both are taken and cleared before anything else.
+    const { run: deepLink } = remote.adoptFragment();
+    if (isRemote()) {
+      set({ paired: remote.paired() });
+      if (!get().paired) {
+        set({ ready: true });
+        return;
+      }
+    }
+
     try {
       const [settings, projects, runs, connection] = await Promise.all([
         api.getSettings(),
@@ -128,15 +163,28 @@ export const useStore = create<State>((set, get) => ({
 
       set({ settings, projects, runs, connection, ready: true });
 
+      if (deepLink && runs.some((run) => run.id === deepLink)) {
+        set({ selectedRunId: deepLink, screen: "run" });
+      }
+
       // Prefer a project that is actually set up, so the app opens on
       // something workable rather than the first one alphabetically.
       const bound = projects.find((project) =>
         settings.bindings.some((binding) => binding.project_id === project.id),
       );
       const opening = bound?.id ?? projects[0]?.id ?? null;
-      if (opening) await get().selectProject(opening);
+      if (opening) {
+        set({ selectedProjectId: opening });
+        if (!deepLink) set({ screen: "board" });
+        await get().refreshBoard();
+      }
     } catch (error) {
       set({ ready: true });
+      if (error instanceof remote.Unauthorised) {
+        get().unpair();
+        set({ pairingError: error.message });
+        return;
+      }
       get().notify("error", describe(error));
     }
 
@@ -156,10 +204,45 @@ export const useStore = create<State>((set, get) => ({
         void get().syncFromFlux();
       }, 400);
     });
+
+    // A phone loses its socket every time it is locked. Events sent in the
+    // meantime are gone, so the run list is re-read when it comes back.
+    unsubscribeConnectivity?.();
+    unsubscribeConnectivity = onConnectivity(({ online, recovered }) => {
+      set({ online });
+      if (recovered) void get().resync();
+    });
+  },
+
+  async resync() {
+    try {
+      const runs = await api.listRuns();
+      set({ runs });
+    } catch (error) {
+      if (error instanceof remote.Unauthorised) get().unpair();
+      return;
+    }
+    await get().syncFromFlux();
+  },
+
+  async pair(token) {
+    remote.storeToken(token.trim());
+    set({ paired: true, pairingError: null, ready: false });
+    remote.reconnect();
+    await get().initialise();
+  },
+
+  unpair() {
+    remote.storeToken(null);
+    set({ paired: false, ready: true, runs: [], projects: [], board: null });
+  },
+
+  setMenuOpen(open) {
+    set({ menuOpen: open });
   },
 
   async selectProject(projectId) {
-    set({ selectedProjectId: projectId, screen: "board" });
+    set({ selectedProjectId: projectId, screen: "board", menuOpen: false });
     await get().refreshBoard();
   },
 
@@ -210,11 +293,11 @@ export const useStore = create<State>((set, get) => ({
   },
 
   openScreen(screen) {
-    set({ screen });
+    set({ screen, menuOpen: false });
   },
 
   openRun(runId) {
-    set({ selectedRunId: runId, screen: "run" });
+    set({ selectedRunId: runId, screen: "run", menuOpen: false });
   },
 
   async setEpicAuto(epicId, auto) {
@@ -318,7 +401,9 @@ export const useStore = create<State>((set, get) => ({
   async saveSettings(settings) {
     try {
       await api.saveSettings(settings);
-      set({ settings });
+      // Re-read rather than keep the draft: the engine fills in what the
+      // interface cannot — a remote token minted as the switch went on.
+      set({ settings: await api.getSettings().catch(() => settings) });
       await get().testConnection();
       get().notify("info", "Settings saved.");
     } catch (error) {
@@ -378,6 +463,11 @@ export const useStore = create<State>((set, get) => ({
   },
 
   notify(level, message) {
+    if (message === UNAUTHORISED) {
+      get().unpair();
+      set({ pairingError: message });
+      return;
+    }
     const id = ++toastId;
     set({ toasts: [...get().toasts, { id, level, message }] });
     setTimeout(() => get().dismissToast(id), 6000);
@@ -428,6 +518,12 @@ function applyEngineEvent(
     case "notice":
       get().notify(event.level === "error" ? "error" : "info", event.message);
       break;
+
+    case "lagged":
+      // The server dropped events this connection could not keep up with;
+      // the runs are re-read rather than shown with holes in their feeds.
+      void get().resync();
+      break;
   }
 }
 
@@ -437,8 +533,12 @@ function applyTheme(theme: "dark" | "light") {
   }
 }
 
+/** What the remote server says when it refuses a token, matched on to re-pair. */
+const UNAUTHORISED = "This token is not accepted. Pair again from the desktop app.";
+
 function describe(error: unknown): string {
   if (typeof error === "string") return error;
+  if (error instanceof remote.Unauthorised) return UNAUTHORISED;
   if (error instanceof Error) return error.message;
   return String(error);
 }

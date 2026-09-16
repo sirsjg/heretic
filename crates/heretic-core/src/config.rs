@@ -316,6 +316,136 @@ impl ProjectBinding {
     }
 }
 
+/// Remote access: a small web server inside Heretic that serves this same
+/// interface to a phone or another machine.
+///
+/// Off by default, and bound to this machine only until the user says
+/// otherwise — a listener is a door, and a door should be opened on purpose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RemoteConfig {
+    pub enabled: bool,
+    /// The interface to listen on. `127.0.0.1` keeps it to this machine,
+    /// `0.0.0.0` opens every interface, and a specific address — a Tailscale
+    /// one, say — just that one.
+    pub bind: String,
+    pub port: u16,
+    /// The bearer token a remote client must present. Generated the first
+    /// time remote access is switched on; rotating it logs every phone out.
+    pub token: Option<String>,
+    /// Where this server is reached from outside, when that is not simply
+    /// `http://<address>:<port>` — behind Tailscale Serve or a reverse proxy.
+    /// Used for the pairing link and for links in notifications.
+    pub public_url: Option<String>,
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: "127.0.0.1".into(),
+            port: 7411,
+            token: None,
+            public_url: None,
+        }
+    }
+}
+
+impl RemoteConfig {
+    /// A fresh bearer token: 256 bits from the OS, as hex.
+    ///
+    /// Two v4 UUIDs rather than a new dependency — each carries 122 random
+    /// bits, and the `uuid` crate draws them from the operating system.
+    pub fn generate_token() -> String {
+        format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        )
+    }
+
+    /// The address clients should use, preferring what the user told us.
+    pub fn base_url_for(&self, host: &str) -> String {
+        match self.public_url.as_deref().map(str::trim) {
+            Some(url) if !url.is_empty() => url.trim_end_matches('/').to_string(),
+            _ => {
+                let host = if host.contains(':') && !host.starts_with('[') {
+                    format!("[{host}]")
+                } else {
+                    host.to_string()
+                };
+                format!("http://{host}:{}", self.port)
+            }
+        }
+    }
+}
+
+/// Push notifications for the moments a run needs a person: a question, a
+/// failure, work sitting on a branch waiting to be merged.
+///
+/// Both services are plain HTTP posts with a phone app on the other end;
+/// ntfy is also self-hostable. Neither is contacted unless it is configured.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct NotifyConfig {
+    pub ntfy: Option<NtfyConfig>,
+    pub pushover: Option<PushoverConfig>,
+    /// Also say when a run finishes cleanly. Off by default: on a busy board
+    /// that is a buzz every few minutes, and none of them need anything.
+    pub on_success: bool,
+}
+
+impl NotifyConfig {
+    /// Whether any service is set up well enough to be posted to.
+    pub fn enabled(&self) -> bool {
+        self.ntfy.as_ref().is_some_and(NtfyConfig::enabled)
+            || self.pushover.as_ref().is_some_and(PushoverConfig::enabled)
+    }
+}
+
+/// An [ntfy](https://ntfy.sh) topic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NtfyConfig {
+    /// The server, `https://ntfy.sh` unless self-hosted.
+    pub server: String,
+    /// The topic to publish to. Anyone who knows it can subscribe, so make it
+    /// unguessable on the public server.
+    pub topic: String,
+    /// An access token, for a protected topic.
+    pub token: Option<String>,
+}
+
+impl Default for NtfyConfig {
+    fn default() -> Self {
+        Self {
+            server: "https://ntfy.sh".into(),
+            topic: String::new(),
+            token: None,
+        }
+    }
+}
+
+impl NtfyConfig {
+    pub fn enabled(&self) -> bool {
+        !self.topic.trim().is_empty() && !self.server.trim().is_empty()
+    }
+}
+
+/// A [Pushover](https://pushover.net) application and the user it delivers to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct PushoverConfig {
+    pub user_key: String,
+    pub app_token: String,
+}
+
+impl PushoverConfig {
+    pub fn enabled(&self) -> bool {
+        !self.user_key.trim().is_empty() && !self.app_token.trim().is_empty()
+    }
+}
+
 /// The whole persisted configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -337,6 +467,12 @@ pub struct Settings {
     /// network worth scanning for weights.
     #[serde(default = "default_hosts")]
     pub hosts: Vec<ModelHost>,
+    /// Serving this interface to a phone or another machine.
+    #[serde(default)]
+    pub remote: RemoteConfig,
+    /// Push notifications for the moments a run needs a person.
+    #[serde(default)]
+    pub notifications: NotifyConfig,
 }
 
 fn default_hosts() -> Vec<ModelHost> {
@@ -352,6 +488,8 @@ impl Default for Settings {
             roles: BTreeMap::new(),
             bindings: Vec::new(),
             hosts: default_hosts(),
+            remote: RemoteConfig::default(),
+            notifications: NotifyConfig::default(),
         }
     }
 }
@@ -398,6 +536,8 @@ impl Settings {
             roles,
             bindings: Vec::new(),
             hosts: default_hosts(),
+            remote: RemoteConfig::default(),
+            notifications: NotifyConfig::default(),
         }
     }
 
@@ -494,6 +634,52 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_saved_before_remote_access_existed_still_load() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"flux":{"base_url":"http://localhost:3000"}}"#)
+                .expect("old settings should parse");
+        assert!(!settings.remote.enabled);
+        assert_eq!(settings.remote.bind, "127.0.0.1");
+        assert_eq!(settings.remote.port, 7411);
+        assert!(settings.remote.token.is_none());
+        assert!(!settings.notifications.enabled());
+    }
+
+    #[test]
+    fn a_generated_token_is_long_random_hex() {
+        let a = RemoteConfig::generate_token();
+        let b = RemoteConfig::generate_token();
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn the_public_url_wins_over_the_bound_address() {
+        let mut remote = RemoteConfig::default();
+        assert_eq!(remote.base_url_for("100.64.0.9"), "http://100.64.0.9:7411");
+        assert_eq!(remote.base_url_for("fe80::1"), "http://[fe80::1]:7411");
+        remote.public_url = Some("https://heretic.example.ts.net/".into());
+        assert_eq!(
+            remote.base_url_for("100.64.0.9"),
+            "https://heretic.example.ts.net"
+        );
+    }
+
+    #[test]
+    fn notifications_count_as_enabled_only_with_a_usable_service() {
+        let mut config = NotifyConfig::default();
+        assert!(!config.enabled());
+        config.ntfy = Some(NtfyConfig::default());
+        assert!(!config.enabled(), "an empty topic is nowhere to post");
+        config.ntfy = Some(NtfyConfig {
+            topic: "heretic-abc".into(),
+            ..NtfyConfig::default()
+        });
+        assert!(config.enabled());
+    }
 
     /// The tag each runner is written under, in settings on disk and across the
     /// bridge to the UI. These strings are duplicated in `ui/src/lib/types.ts`,

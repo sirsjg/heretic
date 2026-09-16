@@ -11,19 +11,25 @@ pub mod flux;
 pub mod history;
 pub mod linear;
 pub mod model;
+pub mod notify;
 pub mod orchestrator;
 pub mod paths;
 pub mod prompt;
 pub mod runner;
 pub mod selection;
+pub mod service;
 pub mod source;
 pub mod store;
 pub mod worktree;
 
-pub use config::{Isolation, ModelProfile, Pipeline, ProjectBinding, Role, RunnerKind, Settings};
+pub use config::{
+    Isolation, ModelProfile, NotifyConfig, Pipeline, ProjectBinding, RemoteConfig, Role,
+    RunnerKind, Settings,
+};
 pub use flux::{FluxClient, FluxConfig, FluxError, FluxEvent, FluxWatcher};
 pub use history::RunHistory;
 pub use linear::{LinearClient, LinearConfig};
 pub use model::{Epic, Priority, Project, SourceKind, Task, TaskStatus};
 pub use orchestrator::{Engine, EngineEvent, RunRecord, RunStage, RunStatus};
+pub use service::Service;
 pub use source::{SourceError, TaskSource};

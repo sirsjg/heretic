@@ -230,3 +230,69 @@ body {
   height: 5.25rem;
   padding-top: 28px;
 }
+
+/* ---------------------------------------------------------------------------
+   Phones
+
+   The same interface, served by heretic-server and opened from a home-screen
+   icon. The sidebar becomes a drawer, the inspector a sheet, and the bottom
+   tab bar takes over navigation — all switched on layout width, not device.
+--------------------------------------------------------------------------- */
+
+/* A page installed to the home screen runs edge to edge; keep clear of the
+   notch and the home indicator. */
+.app-shell {
+  padding-top: env(safe-area-inset-top);
+}
+.tab-bar {
+  --tab-bar: 50px;
+  height: calc(var(--tab-bar) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (max-width: 767px) {
+  /* Fingers, not pointers: no hover flashes, no rubber-banding of the whole
+     page behind a panel that scrolls on its own. */
+  body {
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+
+  @keyframes slide-in {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+  .drawer {
+    animation: slide-in 180ms ease-out;
+    /* The tab bar stays reachable underneath. */
+    bottom: calc(50px + env(safe-area-inset-bottom));
+  }
+
+  /* A grid or flex child defaults to its content's width, and one long
+     unbreakable token — a URL in an error — would push a whole settings
+     panel past the edge of the screen. */
+  .grid > *,
+  .flex > * {
+    min-width: 0;
+  }
+  .grid span,
+  .grid p {
+    overflow-wrap: anywhere;
+  }
+
+  @keyframes rise {
+    from { transform: translateY(24px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  .inspector-sheet {
+    animation: rise 180ms ease-out;
+  }
+}
+
+/* The QR code is drawn in currentColor on a white card; the card, not the
+   theme, decides the colour. */
+.qr svg {
+  display: block;
+  width: 180px;
+  height: 180px;
+}

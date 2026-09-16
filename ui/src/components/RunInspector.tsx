@@ -49,12 +49,15 @@ export function RunInspector({
   onTab,
   onClose,
   width,
+  fullWidth = false,
 }: {
   run: RunRecord;
   tab: InspectorTab;
   onTab: (tab: InspectorTab) => void;
   onClose: () => void;
   width: number;
+  /** On a phone the panel is the whole screen, not a column beside the feed. */
+  fullWidth?: boolean;
 }) {
   // Bumped by the refresh button. Everything else re-reads on its own when the
   // run moves on, so this is only for "I changed something outside the app".
@@ -66,11 +69,15 @@ export function RunInspector({
       className="flex flex-col overflow-hidden border-l"
       // The chosen width is what it wants, not what it insists on: on a narrow
       // window it gives ground so the feed beside it stays readable.
-      style={{
-        flex: `0 1 ${width}px`,
-        minWidth: INSPECTOR_FLOOR,
-        background: "var(--surface)",
-      }}
+      style={
+        fullWidth
+          ? { flex: "1 1 auto", width: "100%", background: "var(--surface)" }
+          : {
+              flex: `0 1 ${width}px`,
+              minWidth: INSPECTOR_FLOOR,
+              background: "var(--surface)",
+            }
+      }
     >
       <header className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
         <Tab

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/heretic-core", "crates/heretic-app"]
+members = ["crates/heretic-core", "crates/heretic-server", "crates/heretic-app"]
 
 [workspace.package]
 version = "0.6.0"

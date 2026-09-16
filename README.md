@@ -42,6 +42,7 @@ Heretic is the replacement. Same premise, different machine underneath:
 | Isolation | Shared checkout | A `git worktree` per task, on its own branch |
 | Landing the work | Committed in place | Merge or discard from the app, on your terms |
 | Local models | — | Ollama, vLLM, LM Studio, llama.cpp — local or over the network |
+| Away from the desk | — | The same interface on your phone, and a push when a run needs you |
 
 Momentum still works and its releases stay up, but new work happens here. If you
 are starting today, start with Heretic.
@@ -136,6 +137,73 @@ An unreadable review verdict is never treated as approval.
 
 <br>
 
+## Watching from your phone
+
+Heretic can serve this same interface over the network, so the runs can be
+watched — and an agent's question answered, a finished branch merged or
+discarded — from a phone on the sofa or a laptop somewhere else entirely.
+
+Switch it on under **Settings → Remote access**. Heretic starts a small web
+server inside the app and shows a QR code; scanning it with the phone's camera
+opens the interface already paired, and from there it can be added to the home
+screen like any app. Everything the desktop window can do, the phone can do
+too, laid out for a narrow screen: the project list becomes a drawer, the
+changes panel a sheet, and a bottom bar carries the navigation.
+
+Access is one bearer token, minted when remote access is first enabled and
+carried in the pairing link. Anyone holding it can do what you can, so:
+
+- **Listen on a Tailscale address** where you have one. It reaches your own
+  devices from anywhere and nobody else's. The listener defaults to this
+  machine only; the Settings screen lists every address it could use.
+- **Rotate the token** from the same screen to log every paired device out.
+- Put a **public address** in when the server sits behind Tailscale Serve or
+  a reverse proxy, so the pairing link and notifications point at it.
+
+### A buzz when a run needs you
+
+Under **Settings → Notifications**, connect [ntfy](https://ntfy.sh) (free, open
+source, self-hostable) or [Pushover](https://pushover.net) and Heretic posts to
+your phone at the moments that need a person: an agent has stopped to ask a
+question, a run has failed or needs attention, or approved work is sitting on
+a branch waiting to be merged. Progress is never announced, and a run that is
+merged automatically is silent unless you ask otherwise.
+
+### A glance without the interface
+
+With the token as a bearer, `GET /api/ticker` answers with one line of plain
+text — `2 running · 1 waiting for you · 1 to merge` — and `GET /api/status`
+with the same as JSON, plus the runs that matter right now. That is enough for
+a menu bar widget, a shell prompt, or the display of a pair of smart glasses:
+
+```bash
+curl -s -H "Authorization: Bearer $HERETIC_TOKEN" http://100.101.7.42:7411/api/ticker
+```
+
+Everything the interface does goes through `POST /api/call/<command>` with a
+JSON body, and events arrive on a WebSocket at `/api/events?token=…` — the
+same commands and events the desktop uses, so a script can do anything the
+window can.
+
+### Without a window at all
+
+`heretic-serve` runs the engine and the server with no desktop app: for a
+machine that has the repositories and the agent CLIs but no screen. It reads
+the same settings file the desktop keeps, so set the Flux server, the models
+and the project folders up in the app first (or edit `settings.json`
+directly), then:
+
+```bash
+heretic-serve --bind 100.101.7.42        # a Tailscale address, or 0.0.0.0
+```
+
+It prints the pairing link on start. Run one or the other on a machine — the
+desktop app and the daemon share the run history, and both at once would each
+pick up the same ready tasks. The Flux sign-in window is the one thing the
+daemon cannot do; use an API key.
+
+<br>
+
 ## Requirements
 
 - **[Flux](https://github.com/sirsjg/flux)** running and reachable
@@ -190,6 +258,7 @@ Grab a bundle from the [releases page](https://github.com/sirsjg/heretic/release
 | macOS, Intel | `heretic_<version>_darwin_amd64.dmg` |
 | Linux, x86_64 | `heretic_<version>_linux_amd64.AppImage` |
 | Debian / Ubuntu, x86_64 | `heretic_<version>_linux_amd64.deb` |
+| Headless server, any of the above | `heretic-serve_<version>_<platform>.tar.gz` |
 
 ```bash
 # Debian and derivatives

@@ -160,3 +160,31 @@ export const IconCopy = ({ className = "size-4", style }: Props) => (
     <path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3" />
   </svg>
 );
+
+export const IconMenu = ({ className = "size-4", style }: Props) => (
+  <svg {...base} className={className} style={style}>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </svg>
+);
+
+export const IconPhone = ({ className = "size-4", style }: Props) => (
+  <svg {...base} className={className} style={style}>
+    <rect x="7" y="2.5" width="10" height="19" rx="2" />
+    <path d="M11 18h2" />
+  </svg>
+);
+
+export const IconBell = ({ className = "size-4", style }: Props) => (
+  <svg {...base} className={className} style={style}>
+    <path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z" />
+    <path d="M10 20a2 2 0 0 0 4 0" />
+  </svg>
+);
+
+export const IconOffline = ({ className = "size-4", style }: Props) => (
+  <svg {...base} className={className} style={style}>
+    <path d="M3 8.5a14 14 0 0 1 18 0M6.5 12.5a9 9 0 0 1 11 0M10 16.5a4 4 0 0 1 4 0" />
+    <path d="M4 4l16 16" />
+    <circle cx="12" cy="19.5" r="0.6" fill="currentColor" />
+  </svg>
+);

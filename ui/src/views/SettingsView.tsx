@@ -15,6 +15,7 @@ import {
 } from "../components/ui";
 import { IconFolder } from "../components/icons";
 import { AccessPanel } from "./AccessPanel";
+import { NotificationsPanel, RemotePanel } from "./RemotePanel";
 
 export function SettingsView() {
   const {
@@ -131,6 +132,22 @@ export function SettingsView() {
             setDraft={setDraft}
             saveSettings={saveSettings}
             reloadProjects={reconnect}
+          />
+
+          <RemotePanel
+            draft={draft}
+            saved={settings}
+            setDraft={setDraft}
+            saveSettings={saveSettings}
+            onNotify={notify}
+          />
+
+          <NotificationsPanel
+            draft={draft}
+            saved={settings}
+            setDraft={setDraft}
+            saveSettings={saveSettings}
+            onNotify={notify}
           />
 
           {binding && board ? (

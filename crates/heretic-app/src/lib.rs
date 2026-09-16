@@ -1,8 +1,9 @@
 //! The desktop shell.
 //!
-//! Deliberately thin: it owns the window, exposes the engine as Tauri commands,
-//! and forwards engine and Flux events to the interface. All behaviour lives in
-//! `heretic-core`, which is why it can be tested without a GUI.
+//! Deliberately thin: it owns the window, exposes the service as Tauri
+//! commands, and forwards engine and Flux events to the interface. All
+//! behaviour lives in `heretic-core`, which is why it can be tested without a
+//! GUI — and why `heretic-server` can offer the same commands over HTTP.
 
 mod commands;
 mod state;
@@ -11,18 +12,13 @@ use state::AppState;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
-/// How often the auto loop looks for newly-ready work.
-///
-/// Flux's event stream normally tells us sooner; this is the safety net for
-/// changes made while disconnected, or by a CLI writing the data file directly.
-const AUTO_POLL: std::time::Duration = std::time::Duration::from_secs(45);
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "heretic_app=info,heretic_core=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "heretic_app=info,heretic_core=info,heretic_server=info".into()
+            }),
         )
         .init();
 
@@ -31,12 +27,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let state = AppState::load();
-            let engine = Arc::clone(&state.engine);
+            let service = Arc::clone(&state.service);
+            let remote = Arc::clone(&state.remote);
             app.manage(state);
 
             // Relay engine events to the interface.
             let handle = app.handle().clone();
-            let mut events = engine.subscribe();
+            let mut events = service.subscribe();
             tauri::async_runtime::spawn(async move {
                 loop {
                     match events.recv().await {
@@ -51,47 +48,26 @@ pub fn run() {
                 }
             });
 
-            // Watch Flux so the board reflects changes made elsewhere, and so
-            // work switched to Auto in the Flux UI is picked up promptly. The
-            // watcher is rebuilt whenever the Flux settings change — signing in
-            // or pointing at a new server must not need a restart.
+            // And what Flux announces, so the board reflects changes made
+            // elsewhere.
             let handle = app.handle().clone();
-            let watch_engine = Arc::clone(&engine);
+            let mut flux = service.subscribe_flux();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    let config = watch_engine.settings().await.flux;
-                    let watcher = heretic_core::FluxWatcher::start(config.clone());
-                    let mut events = watcher.subscribe();
-                    let mut check =
-                        tokio::time::interval(std::time::Duration::from_secs(3));
-
-                    loop {
-                        tokio::select! {
-                            event = events.recv() => match event {
-                                Ok(event) => {
-                                    let _ = handle.emit("flux://event", &event);
-                                    if matches!(
-                                        event,
-                                        heretic_core::FluxEvent::Changed(_)
-                                            | heretic_core::FluxEvent::Invalidated
-                                    ) {
-                                        watch_engine.tick_auto().await;
-                                    }
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                            },
-                            _ = check.tick() => {
-                                if watch_engine.settings().await.flux != config {
-                                    break;
-                                }
-                            }
+                    match flux.recv().await {
+                        Ok(event) => {
+                            let _ = handle.emit("flux://event", &event);
                         }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
             });
 
-            tauri::async_runtime::spawn(Arc::clone(&engine).auto_loop(AUTO_POLL));
+            // The Flux watcher, the auto loop and the notifier.
+            tauri::async_runtime::spawn(Arc::clone(&service).run_background());
+            // The remote listener, whenever the settings ask for one.
+            tauri::async_runtime::spawn(remote.run());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -123,6 +99,9 @@ pub fn run() {
             commands::remove_host,
             commands::openai_base,
             commands::platform,
+            commands::remote_status,
+            commands::rotate_remote_token,
+            commands::test_notifications,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Heretic");

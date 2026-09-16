@@ -109,6 +109,11 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
         run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
+      # The headless server shares every dependency with the app, so this is
+      # a short incremental build on top of the one above.
+      - name: Build the headless server
+        run: cargo build --release --locked --target ${{ matrix.target }} -p heretic-server --bin heretic-serve
+
       - name: Collect artifacts
         shell: bash
         env:
@@ -141,6 +146,9 @@ jobs:
               collect deb deb
               ;;
           esac
+
+          tar -C "target/$TARGET/release" -czf "dist/heretic-serve_${VERSION}_${SLUG}.tar.gz" heretic-serve
+          echo "  heretic-serve_${VERSION}_${SLUG}.tar.gz  <-  target/$TARGET/release/heretic-serve"
 
       - uses: actions/upload-artifact@v7
         with:
