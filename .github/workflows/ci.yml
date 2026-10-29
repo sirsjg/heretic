@@ -98,6 +98,7 @@ jobs:
         run: |
           sh -n install.sh
           bash -n scripts/set-version.sh
+          bash -n scripts/updater-manifest.sh
 
       - name: Shellcheck
-        run: shellcheck install.sh scripts/set-version.sh
+        run: shellcheck install.sh scripts/set-version.sh scripts/updater-manifest.sh

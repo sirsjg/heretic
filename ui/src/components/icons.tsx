@@ -160,3 +160,10 @@ export const IconCopy = ({ className = "size-4", style }: Props) => (
     <path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3" />
   </svg>
 );
+
+export const IconDownload = ({ className = "size-4", style }: Props) => (
+  <svg {...base} className={className} style={style}>
+    <path d="M12 4v11M7.5 10.5L12 15l4.5-4.5" />
+    <path d="M4.5 17v1.5a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V17" />
+  </svg>
+);

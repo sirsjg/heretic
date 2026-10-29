@@ -237,6 +237,27 @@ export interface HostProbe {
   warning?: string | null;
 }
 
+/** A newer release than the one running. */
+export interface UpdateInfo {
+  version: string;
+  current_version: string;
+  /** Release notes, in Markdown. */
+  notes: string | null;
+  /**
+   * Whether this install can replace itself. When false (a `.deb` the release
+   * has no signed package for) the interface links to `release_url` instead.
+   */
+  can_install: boolean;
+  release_url: string;
+}
+
+/** How much of an update has downloaded, in bytes. */
+export interface UpdateProgress {
+  downloaded: number;
+  /** Absent when the server does not say how large the bundle is. */
+  total: number | null;
+}
+
 export interface Environment {
   clis: CliStatus[];
   hosts: HostProbe[];

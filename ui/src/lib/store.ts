@@ -1,7 +1,7 @@
 /** Application state: what's loaded, what's selected, and what's running. */
 
 import { create } from "zustand";
-import { api, onEngineEvent, onFluxEvent } from "./bridge";
+import { api, onEngineEvent, onFluxEvent, onUpdateProgress } from "./bridge";
 import type {
   BoardView,
   ConnectionState,
@@ -11,6 +11,8 @@ import type {
   RunRecord,
   Settings,
   SourceKind,
+  UpdateInfo,
+  UpdateProgress,
 } from "./types";
 import { isActive } from "./types";
 
@@ -37,6 +39,17 @@ interface State {
   theme: "dark" | "light";
   /** True while a Flux re-sync is in flight, so a refresh button can show it. */
   syncing: boolean;
+  /** The running version, once known. */
+  appVersion: string | null;
+  /** A newer release, if the last check found one. */
+  update: UpdateInfo | null;
+  updateStatus: "idle" | "checking" | "installing";
+  /** Download progress while installing, otherwise null. */
+  updateProgress: UpdateProgress | null;
+  /** When a check last succeeded. */
+  updateCheckedAt: number | null;
+  /** Hidden for this session; the next version brings it back. */
+  updateDismissed: string | null;
 
   initialise: () => Promise<void>;
   selectProject: (projectId: string) => Promise<void>;
@@ -62,6 +75,14 @@ interface State {
   toggleTheme: () => void;
   notify: (level: "info" | "error", message: string) => void;
   dismissToast: (id: number) => void;
+  /**
+   * Look for a newer release. A quiet check (the background one) keeps
+   * failures to itself; one the user asked for reports them.
+   */
+  checkForUpdate: (quiet?: boolean) => Promise<void>;
+  /** Download and install the update found, then restart into it. */
+  installUpdate: () => Promise<void>;
+  dismissUpdate: () => void;
 }
 
 let toastId = 0;
@@ -71,6 +92,11 @@ let toastId = 0;
 /// would apply every event twice — which shows up as a duplicated feed.
 let unsubscribeEngine: (() => void) | null = null;
 let unsubscribeFlux: (() => void) | null = null;
+let unsubscribeUpdate: (() => void) | null = null;
+let updateTimer: ReturnType<typeof setInterval> | null = null;
+
+/// How often to look for a new release while the app stays open.
+const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 
 /// Flux announces every mutation separately; one drag on its board can be a
 /// burst of events. Collapse a burst into a single re-fetch.
@@ -105,6 +131,12 @@ export const useStore = create<State>((set, get) => ({
   connection: { connected: false },
   toasts: [],
   syncing: false,
+  appVersion: null,
+  update: null,
+  updateStatus: "idle",
+  updateProgress: null,
+  updateCheckedAt: null,
+  updateDismissed: null,
   theme:
     (typeof localStorage !== "undefined" &&
       (localStorage.getItem("heretic.theme") as "dark" | "light" | null)) ||
@@ -156,6 +188,17 @@ export const useStore = create<State>((set, get) => ({
         void get().syncFromFlux();
       }, 400);
     });
+
+    void api.appVersion().then((appVersion) => set({ appVersion })).catch(() => {});
+
+    unsubscribeUpdate?.();
+    unsubscribeUpdate = onUpdateProgress((updateProgress) => set({ updateProgress }));
+
+    // Heretic tends to stay open for days while it works a board, so a single
+    // check at startup is not enough.
+    void get().checkForUpdate(true);
+    if (updateTimer) clearInterval(updateTimer);
+    updateTimer = setInterval(() => void get().checkForUpdate(true), UPDATE_CHECK_INTERVAL);
   },
 
   async selectProject(projectId) {
@@ -385,6 +428,49 @@ export const useStore = create<State>((set, get) => ({
 
   dismissToast(id) {
     set({ toasts: get().toasts.filter((t) => t.id !== id) });
+  },
+
+  async checkForUpdate(quiet = false) {
+    if (get().updateStatus !== "idle") return;
+    set({ updateStatus: "checking" });
+    try {
+      const update = await api.checkForUpdate();
+      set({ update, updateCheckedAt: Date.now() });
+      if (!quiet && !update) get().notify("info", "Heretic is up to date.");
+    } catch (error) {
+      // Offline, or a release still uploading its bundles: the next check will
+      // get it, so only say so when someone asked.
+      if (!quiet) get().notify("error", describe(error));
+    } finally {
+      set({ updateStatus: "idle" });
+    }
+  },
+
+  async installUpdate() {
+    if (get().updateStatus !== "idle") return;
+    // Restarting would kill every run in flight, and their worktrees with
+    // half-finished work in them.
+    const active = get().runs.filter(isActive).length;
+    if (active > 0) {
+      get().notify(
+        "error",
+        `Stop or finish the ${active === 1 ? "run" : `${active} runs`} in progress before updating.`,
+      );
+      return;
+    }
+    set({ updateStatus: "installing", updateProgress: null });
+    try {
+      await api.installUpdate();
+    } catch (error) {
+      get().notify("error", describe(error));
+      // The pending update was consumed; fetch it again so Install still works.
+      set({ updateStatus: "idle", updateProgress: null });
+      await get().checkForUpdate(true);
+    }
+  },
+
+  dismissUpdate() {
+    set({ updateDismissed: get().update?.version ?? null });
   },
 }));
 

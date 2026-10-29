@@ -2,6 +2,7 @@ import { useStore } from "../lib/store";
 import type { ConnectionState } from "../lib/types";
 import { isActive } from "../lib/types";
 import { Badge, Dot, cx } from "./ui";
+import { UpdateCard } from "./Updates";
 import {
   IconBoard,
   IconModels,
@@ -131,6 +132,8 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      <UpdateCard />
 
       <div className="border-t p-2">
         <NavItem

@@ -21,6 +21,8 @@ import type {
   RunRecord,
   Settings,
   SourceKind,
+  UpdateInfo,
+  UpdateProgress,
 } from "./types";
 import { MockEngine } from "./mock";
 
@@ -117,6 +119,36 @@ export const api = {
   async platform(): Promise<string> {
     if (!isDesktop()) return "browser";
     return invoke("platform");
+  },
+
+  /** The version of Heretic that is running. */
+  async appVersion(): Promise<string> {
+    if (!isDesktop()) return "preview";
+    const { getVersion } = await import("@tauri-apps/api/app");
+    return getVersion();
+  },
+
+  /** Look for a newer release. Null means this is the latest. */
+  async checkForUpdate(): Promise<UpdateInfo | null> {
+    return isDesktop() ? invoke("check_for_update") : null;
+  },
+
+  /**
+   * Download and install the update the last check found, then restart into
+   * it. Only returns if installing fails.
+   */
+  async installUpdate(): Promise<void> {
+    if (isDesktop()) return invoke("install_update");
+  },
+
+  /** Open a page in the default browser. */
+  async openUrl(url: string): Promise<void> {
+    if (!isDesktop()) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(url);
   },
 
   async signOut(): Promise<void> {
@@ -273,6 +305,14 @@ export function onEngineEvent(
 export function onFluxEvent(handler: (event: FluxEvent) => void): () => void {
   if (!isDesktop()) return () => {};
   return listenDesktop("flux://event", handler);
+}
+
+/** Download progress while an update installs. */
+export function onUpdateProgress(
+  handler: (progress: UpdateProgress) => void,
+): () => void {
+  if (!isDesktop()) return () => {};
+  return listenDesktop("update://progress", handler);
 }
 
 function listenDesktop<T>(name: string, handler: (event: T) => void): () => void {
