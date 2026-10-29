@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Permissions for the Heretic window.","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-start-dragging","dialog:allow-open","opener:allow-reveal-item-in-dir"]}}
+{"default":{"identifier":"default","description":"Permissions for the Heretic window.","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-start-dragging","dialog:allow-open","opener:allow-reveal-item-in-dir",{"identifier":"opener:allow-open-url","allow":[{"url":"https://github.com/sirsjg/heretic/*"}]}]}}
