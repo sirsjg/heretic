@@ -102,12 +102,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Build bundles
+        shell: bash
         env:
           # Ad-hoc signature. Heretic is not distributed under an Apple
           # Developer ID, so this is about producing a valid signature for the
           # bundle, not about passing notarisation.
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
-        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          # Signs the bundles the in-app updater installs; the app checks them
+          # against the public key in tauri.conf.json. Without the secret the
+          # release still builds, it just ships no update for existing installs.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          updater=
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            updater='{"bundle":{"createUpdaterArtifacts":true}}'
+          else
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set; building without updater bundles"
+          fi
+          pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} \
+            ${updater:+--config "$updater"}
 
       - name: Collect artifacts
         shell: bash
@@ -131,14 +146,29 @@ jobs:
             echo "  heretic_${VERSION}_${SLUG}.$2  <-  $found"
           }
 
+          # The updater's bundles and their signatures, present only when the
+          # build was signed. A missing one is skipped here and caught by
+          # updater-manifest.sh, which wants all or none.
+          collect_signed() {
+            # $1 = subdirectory, $2 = extension
+            found=$(find "$bundle/$1" -maxdepth 1 -name "*.$2.sig" -type f | head -n 1)
+            [ -n "$found" ] || return 0
+            cp "${found%.sig}" "dist/heretic_${VERSION}_${SLUG}.$2"
+            cp "$found" "dist/heretic_${VERSION}_${SLUG}.$2.sig"
+            echo "  heretic_${VERSION}_${SLUG}.$2.sig  <-  $found"
+          }
+
           echo "collected:"
           case "$SLUG" in
             darwin_*)
               collect dmg dmg
+              collect_signed macos app.tar.gz
               ;;
             linux_*)
               collect appimage AppImage
               collect deb deb
+              collect_signed appimage AppImage
+              collect_signed deb deb
               ;;
           esac
 
@@ -165,6 +195,24 @@ jobs:
           path: staging
           pattern: bundles-*
           merge-multiple: true
+
+      - name: Updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Release notes shown in the app. A hand-pushed tag has no release yet.
+          NOTES=$(gh release view "$TAG" --json body --jq .body 2>/dev/null || true)
+          export NOTES
+          status=0
+          scripts/updater-manifest.sh "${TAG#v}" staging "${{ github.repository }}" \
+            > latest.json || status=$?
+          case "$status" in
+            0) mv latest.json staging/latest.json; cat staging/latest.json ;;
+            3) echo "::warning::unsigned build; existing installs will not be offered this release" ;;
+            *) exit "$status" ;;
+          esac
 
       - name: Checksum
         working-directory: staging
@@ -232,6 +280,9 @@ jobs:
             homepage "https://github.com/${{ github.repository }}"
 
             depends_on macos: ">= :monterey"
+
+            # The app updates itself in place, so brew upgrade leaves it alone.
+            auto_updates true
 
             app "Heretic.app"
 

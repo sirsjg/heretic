@@ -6,6 +6,7 @@
 
 mod commands;
 mod state;
+mod updates;
 
 use state::AppState;
 use std::sync::Arc;
@@ -29,6 +30,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::PendingUpdate::default())
         .setup(|app| {
             let state = AppState::load();
             let engine = Arc::clone(&state.engine);
@@ -123,6 +126,8 @@ pub fn run() {
             commands::remove_host,
             commands::openai_base,
             commands::platform,
+            updates::check_for_update,
+            updates::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Heretic");

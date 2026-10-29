@@ -227,6 +227,23 @@ change how you are allowed to open it:
 If that trade is not one you want to make, build from source — the result is
 identical.
 
+### Updating
+
+Heretic looks for a new release when it starts, and every few hours while it
+stays open. When one is out, a card at the foot of the sidebar says so, and
+**Install and restart** downloads it, checks its signature, replaces the app and
+reopens it. **Settings → Updates** shows the version you are on and checks on
+demand.
+
+Installing restarts the app, so it waits until no run is in progress.
+
+- **macOS and the AppImage** update themselves, however they were installed. A
+  Homebrew install is marked as self-updating, so `brew upgrade` leaves it be.
+  The download is not quarantined, so Gatekeeper does not get in the way.
+- **A `.deb`** updates itself when the release carries a signed `.deb`, asking
+  for your password so `dpkg` can install it. Otherwise the card links to the
+  release instead, and you install the new `.deb` as before.
+
 <br>
 
 ## Build from source
@@ -593,6 +610,14 @@ to `main` is read by
 a patch, a `feat:` a minor, anything breaking a major. The version is written
 into `package.json`, `Cargo.toml` and `tauri.conf.json`, tagged, and the desktop
 bundles are built and attached to the GitHub release with a `checksums.txt`.
+
+The bundles the app updates itself from are signed, and a `latest.json` on each
+release tells running copies where they are. Signing needs the
+`TAURI_SIGNING_PRIVATE_KEY` secret (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, if
+the key has one), the private half of the `pubkey` in `tauri.conf.json`. A
+release built without it still ships, but existing installs are not offered it.
+Losing the key means shipping a new `pubkey` in a release people then have to
+install by hand, so keep a copy somewhere safe.
 
 Nothing is released by hand, so the commit message is the release note. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the prefixes, and

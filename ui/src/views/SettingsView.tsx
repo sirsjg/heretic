@@ -15,6 +15,7 @@ import {
 } from "../components/ui";
 import { IconFolder } from "../components/icons";
 import { AccessPanel } from "./AccessPanel";
+import { UpdateActions } from "../components/Updates";
 
 export function SettingsView() {
   const {
@@ -319,9 +320,47 @@ export function SettingsView() {
               </p>
             </Panel>
           )}
+
+          <UpdatesPanel />
         </div>
       </div>
     </div>
+  );
+}
+
+/** The running version, and whether a newer one is out. */
+function UpdatesPanel() {
+  const { appVersion, update, updateStatus, updateCheckedAt, checkForUpdate } =
+    useStore();
+
+  return (
+    <Panel
+      title="Updates"
+      description="Heretic looks for a new release when it starts, and every few hours while it stays open."
+      actions={appVersion && <Badge tone="neutral">Version {appVersion}</Badge>}
+    >
+      <div className="flex flex-col gap-3 px-4 py-4">
+        <div className="flex items-center gap-3">
+          <Button
+            disabled={updateStatus !== "idle"}
+            onClick={() => void checkForUpdate()}
+          >
+            {updateStatus === "checking" ? "Checking…" : "Check for updates"}
+          </Button>
+          <span className="text-[11.5px] text-[var(--text-muted)]">
+            {update
+              ? `Heretic ${update.version} is available.`
+              : updateCheckedAt
+                ? `Up to date as of ${new Date(updateCheckedAt).toLocaleTimeString([], {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}.`
+                : null}
+          </span>
+        </div>
+        <UpdateActions />
+      </div>
+    </Panel>
   );
 }
 
